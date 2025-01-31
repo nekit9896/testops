@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 
 db = SQLAlchemy()
 
+
 class TestRun(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     run_name = db.Column(db.String(128), nullable=False)
