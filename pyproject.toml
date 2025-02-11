@@ -4,6 +4,7 @@ version = "0.1.0"
 description = ""
 authors = ["Your Name <you@example.com>"]
 readme = "README.md"
+packages = [{include = "testops"}]
 
 [tool.poetry.dependencies]
 python = "^3.13"
@@ -12,9 +13,10 @@ flask-sqlalchemy = "^3.1.1"
 flask-migrate = "^4.1.0"
 python-dotenv = "^1.0.1"
 psycopg2-binary = "^2.9.10"
-black = "^25.1.0"
 flake8 = "^7.1.1"
 isort = "^6.0.0"
+minio = "^7.2.15"
+black = "^25.1.0"
 
 
 [build-system]
