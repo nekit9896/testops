@@ -3,19 +3,52 @@ from datetime import datetime
 
 from flask import (Blueprint, jsonify, render_template, request,
                    send_from_directory)
+from minio import S3Error
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.models import TestRun
-from constants import ALLURE_REPORT_NAME, UPLOAD_FOLDER
+from app.clients import MinioClient
+
+from app.models import TestResult
+from constants import ALLURE_REPORT_NAME, UPLOAD_FOLDER, BUCKET_NAME, ALLURE_RESULT_FOLDER_NAME
 from helpers import allowed_file, create_reports_list, get_report
 
 bp = Blueprint("routes", __name__)
+minio_client = MinioClient()
 
 
 @bp.route("/health", methods=["GET"])
 def health_check():
     return jsonify({"status": "ok"}), 200
+
+
+# @bp.route('/upload', methods=['POST'])
+# def upload_results():
+#     files = request.files.getlist('files')
+#     run_id = request.form.get('run_id')
+#     run_date = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+#     run_name = f"test_run-{run_id}-{run_date}"
+#     folder_path = f"allure-results/{run_name}/"
+#
+#     for file in files:
+#         try:
+#             file_path = folder_path + file.filename
+#             minio_client.put_object(BUCKET_NAME, file_path, file.stream, file.content_length)
+#         except S3Error as e:
+#             return jsonify({"error": str(e)}), 500
+#
+#     file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{folder_path}"
+#
+#     # Save metadata to PostgreSQL
+#     new_result = TestResult(
+#         run_name=run_name,
+#         start_date=datetime.now(),
+#         end_date=datetime.now(),
+#         status='pending',
+#         file_link=file_link
+#     )
+#     db.session.add(new_result)
+#     db.session.commit()
 
 
 @bp.route("/upload", methods=["POST"])
@@ -40,11 +73,22 @@ def upload_results():
     for file in files:
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
-            file_path = os.path.join(result_folder, filename)
-            file.save(file_path)
+
+            # Открываем поток файла без сохранения на диск
+            file_stream = file.stream
+            content_length = len(file.read())
+            file.stream.seek(0)  # Сбрасываем указатель после подсчета длины
+
+            # Загрузка файла в MinIO
+            minio_client.put_object(
+                bucket_name=ALLURE_RESULT_FOLDER_NAME,
+                file_path=f"{run_name}/{filename}",
+                file_stream=file_stream,
+                content_length=content_length
+            )
 
     # Создаем запись о прогоне в базе данных
-    test_run = TestRun(run_name=run_name, result_folder=result_folder)
+    test_run = TestResult(run_name=run_name, result_folder=result_folder)
     db.session.add(test_run)
     db.session.commit()
 

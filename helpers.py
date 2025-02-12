@@ -4,7 +4,7 @@ import subprocess
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.models import TestRun
+from app.models import TestResult
 from constants import (ALLOWED_EXTENSIONS, ALLURE_REPORT_FOLDER_NAME,
                        ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME)
 
@@ -25,7 +25,7 @@ def save_files(run_name, files):
             filename = secure_filename(file.filename)
             file_content = file.read()
 
-            test_run = TestRun(
+            test_run = TestResult(
                 run_name=run_name, file_name=filename, file_content=file_content
             )
             db.session.add(test_run)
