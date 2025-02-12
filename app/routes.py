@@ -3,14 +3,12 @@ from datetime import datetime
 
 from flask import (Blueprint, jsonify, render_template, request,
                    send_from_directory)
-from minio import S3Error
 from werkzeug.utils import secure_filename
 
 from app import db
 from app.clients import MinioClient
-
 from app.models import TestResult
-from constants import ALLURE_REPORT_NAME, UPLOAD_FOLDER, BUCKET_NAME, ALLURE_RESULT_FOLDER_NAME
+from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER
 from helpers import allowed_file, create_reports_list, get_report
 
 bp = Blueprint("routes", __name__)
@@ -81,10 +79,10 @@ def upload_results():
 
             # Загрузка файла в MinIO
             minio_client.put_object(
-                bucket_name=ALLURE_RESULT_FOLDER_NAME,
+                bucket_name=BUCKET_NAME,
                 file_path=f"{run_name}/{filename}",
                 file_stream=file_stream,
-                content_length=content_length
+                content_length=content_length,
             )
 
     # Создаем запись о прогоне в базе данных

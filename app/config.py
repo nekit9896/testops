@@ -1,7 +1,5 @@
 import os
 
-from minio import Minio
-
 
 class Config:
     DEBUG = True
