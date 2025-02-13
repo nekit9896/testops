@@ -1,16 +1,18 @@
 import os
 import subprocess
 
-from minio import S3Error
+from flask import current_app
 from werkzeug.utils import secure_filename
 
 from app import db
-from app.models import TestResult
 from app.clients import MinioClient
+from app.models import TestResult
 from constants import (ALLOWED_EXTENSIONS, ALLURE_REPORT_FOLDER_NAME,
-                       ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME)
+                       ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME,
+                       BUCKET_NAME)
 
 minio_client = MinioClient()
+
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
@@ -121,3 +123,28 @@ def get_report(result_dir_name: str) -> str:
 
         else:
             raise FileNotFoundError("Ошибка при получении html файла с отчетом")
+
+
+def process_and_upload_file(run_name, file):
+    try:
+        filename = secure_filename(file.filename)
+        file_path = f"{run_name}/{filename}"
+
+        # Открываем поток файла без сохранения на диск
+        file_stream = file.stream
+        content_length = len(file.read())
+        file.stream.seek(0)  # Сбрасываем указатель после подсчета длины
+
+        # Проверяем что бакет существует
+        minio_client.ensure_bucket_exists(BUCKET_NAME)
+
+        # Загрузка файла в MinIO
+        minio_client.put_object(
+            bucket_name=BUCKET_NAME,
+            file_path=file_path,
+            file_stream=file_stream,
+            content_length=content_length,
+        )
+    except Exception as e:
+        current_app.logger.error(f"Error processing file {file.filename}: {str(e)}")
+        raise

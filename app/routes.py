@@ -1,15 +1,16 @@
 import os
 from datetime import datetime
 
-from flask import (Blueprint, jsonify, render_template, request,
+from flask import (Blueprint, current_app, jsonify, render_template, request,
                    send_from_directory)
-from werkzeug.utils import secure_filename
 
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER, TEMP_RUN_ID
-from helpers import allowed_file, create_reports_list, get_report
+from constants import (ALLURE_REPORT_NAME, BUCKET_NAME,
+                       UPLOAD_FOLDER)
+from helpers import (allowed_file, create_reports_list, get_report,
+                     process_and_upload_file)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -22,66 +23,72 @@ def health_check():
 
 @bp.route("/upload", methods=["POST"])
 def upload_results():
+    try:
+        # Получаем файлы из запроса
+        files = request.files.getlist("files")
+        if not files or all(f.filename == "" for f in files):
+            return jsonify({"error": "Необходимо загрузить хотя бы один файл"}), 400
 
-    # Получаем файлы из запроса
-    files = request.files.getlist("files")
-    if not files or all(f.filename == "" for f in files):
-        return jsonify({"error": "Необходимо загрузить хотя бы один файл"}), 400
+        # Создаем запись в БД с временным run_name
+        default_run_name = "TempName"
+        new_result = TestResult(
+            run_name=default_run_name,
+            start_date=datetime.now(),
+            status="pending",
+            file_link="",  # Временно пусто, так как ссылки пока нет
+        )
+        db.session.add(new_result)
+        db.session.commit()
 
-    # # Создаем запись в БД с временным run_name
-    # default_run_name = 'TempName'
-    # new_result = TestResult(
-    #     run_name=default_run_name,
-    #     start_date=datetime.now(),
-    #     status='pending',
-    #     file_link=''  # Временно пусто, так как ссылки пока нет
-    # )
-    # db.session.add(new_result)
-    # db.session.commit()
+        # Получаем сгенерированный run_id и формируем run_name
+        run_id = new_result.id
+        # run_id = TEMP_RUN_ID
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"run_{run_id}_{timestamp}"
 
-    # Получаем сгенерированный run_id и формируем run_name
-    # run_id = new_result.id
-    run_id = TEMP_RUN_ID
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_name = f"run_{run_id}_{timestamp}"
+        # Обновляем run_name в БД
+        new_result.run_name = run_name
+        db.session.commit()
 
-    # # Обновляем run_name в БД
-    # new_result.run_name = run_name
-    # db.session.commit()
+        # Создаем папку для сохранения результатов
+        result_folder = os.path.join(UPLOAD_FOLDER, run_name)
+        os.makedirs(result_folder, exist_ok=True)
 
-    # Создаем папку для сохранения результатов
-    result_folder = os.path.join(UPLOAD_FOLDER, run_name)
-    os.makedirs(result_folder, exist_ok=True)
+    except Exception as e:
+        current_app.logger.error(
+            f"Ошибка при создании записи базы данных или папки результатов: {str(e)}"
+        )
+        return (
+            jsonify(
+                {"error": "Ошибка при создании записи в базе данных или директории"}
+            ),
+            500,
+        )
+    try:
+        # Сохраняем файлы
+        for file in files:
+            if file and allowed_file(file.filename):
+                process_and_upload_file(run_name, file)
 
-    # Сохраняем файлы
-    for file in files:
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            file_path = f"{run_name}/{filename}"
+        file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{run_name}"
 
-            # Открываем поток файла без сохранения на диск
-            file_stream = file.stream
-            content_length = len(file.read())
-            file.stream.seek(0)  # Сбрасываем указатель после подсчета длины
+        # Обновляем file_link в PostgreSQL
+        new_result.file_link = file_link
+        db.session.commit()
+    except Exception as e:
+        current_app.logger.error(
+            f"Ошибка при обработке файлов или обновлении ссылки на файл в базе данных: {str(e)}"
+        )
+        return (
+            jsonify(
+                {
+                    "error": "Ошибка при обработке файлов или обновлении ссылки на файл в базе данных"
+                }
+            ),
+            500,
+        )
 
-            # Проверяем что бакет существует
-            minio_client.ensure_bucket_exists(BUCKET_NAME)
-
-            # Загрузка файла в MinIO
-            minio_client.put_object(
-                bucket_name=BUCKET_NAME,
-                file_path=file_path,
-                file_stream=file_stream,
-                content_length=content_length,
-            )
-
-    file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{run_name}"
-    # Обновляем file_link в БД
-    # new_result.file_link = file_link
-    # db.session.commit()
-
-
-    return jsonify({"run_id": file_link, "message": "Файлы успешно загружены"}), 201
+    return jsonify({"run_id": run_id, "message": "Файлы успешно загружены"}), 201
 
 
 @bp.route(rule="/", methods=["GET"])

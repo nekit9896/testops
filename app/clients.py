@@ -18,6 +18,7 @@ class MinioClient:
             secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
             secure=False,  # True, если используется HTTPS
         )
+
     def ensure_bucket_exists(self, bucket_name):
         """Создает бакет, если его нет."""
         try:
