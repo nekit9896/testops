@@ -4,9 +4,7 @@ import subprocess
 from flask import current_app
 from werkzeug.utils import secure_filename
 
-from app import db
 from app.clients import MinioClient
-from app.models import TestResult
 from constants import (ALLOWED_EXTENSIONS, ALLURE_REPORT_FOLDER_NAME,
                        ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME,
                        BUCKET_NAME)
@@ -16,26 +14,6 @@ minio_client = MinioClient()
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS
-
-
-def valid_files(files):
-    """Проверка на наличие и валидность файлов."""
-    return files and not all(f.filename == "" for f in files)
-
-
-def save_files(run_name, files):
-    """Сохраняет файлы в базе данных."""
-    for file in files:
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            file_content = file.read()
-
-            test_run = TestResult(
-                run_name=run_name, file_name=filename, file_content=file_content
-            )
-            db.session.add(test_run)
-
-    db.session.commit()
 
 
 def get_project_subdir_path(folder_name: str) -> str:

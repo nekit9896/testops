@@ -7,8 +7,7 @@ from flask import (Blueprint, current_app, jsonify, render_template, request,
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from constants import (ALLURE_REPORT_NAME, BUCKET_NAME,
-                       UPLOAD_FOLDER)
+from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER
 from helpers import (allowed_file, create_reports_list, get_report,
                      process_and_upload_file)
 
