@@ -1,5 +1,13 @@
-version: "3.8"
 services:
+  db:
+    image: postgres:13
+    environment:
+      POSTGRES_DB: your_db_name
+      POSTGRES_USER: your_db_user
+      POSTGRES_PASSWORD: your_db_password
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+
   flask-app:
     build:
       context: .
@@ -10,11 +18,12 @@ services:
     environment:
       - FLASK_RUN_HOST=0.0.0.0
       - FLASK_ENV=development
-      - MINIO_ENDPOINT=http://minio:9000
+      - MINIO_ENDPOINT=minio:9000
       - MINIO_ACCESS_KEY=youraccesskey
       - MINIO_SECRET_KEY=yoursecretkey
     depends_on:
       - minio
+      - db
     volumes:
       - .:/app
     networks:
@@ -23,15 +32,15 @@ services:
   minio:
     image: minio/minio
     container_name: minio
-    command: server /data
+    command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9002:9001" # Для MinIO Console
+      - "9000:9000"  # Проброс порта 9000 для Web UI
+      - "9001:9001"  # Проброс порта 9001 для консоли MinIO (если используется)
     environment:
       MINIO_ROOT_USER: youraccesskey
       MINIO_ROOT_PASSWORD: yoursecretkey
     volumes:
-      - ./minio-data:/data
+      - minio-data:/data
     deploy:
       resources:
         limits:
@@ -43,3 +52,7 @@ services:
 networks:
   minio-network:
     driver: bridge
+
+volumes:
+  postgres-data:  # Определяем том для PostgreSQL
+  minio-data:     # Определяем том для Minio

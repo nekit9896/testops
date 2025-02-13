@@ -1,16 +1,19 @@
 import os
 from datetime import datetime
 
-from flask import (Blueprint, jsonify, render_template, request,
+from flask import (Blueprint, current_app, jsonify, render_template, request,
                    send_from_directory)
-from werkzeug.utils import secure_filename
 
 from app import db
-from app.models import TestRun
-from constants import ALLURE_REPORT_NAME, UPLOAD_FOLDER
-from helpers import allowed_file, create_reports_list, get_report
+from app.clients import MinioClient
+from app.models import TestResult
+from constants import (ALLURE_REPORT_NAME, BUCKET_NAME,
+                       UPLOAD_FOLDER)
+from helpers import (allowed_file, create_reports_list, get_report,
+                     process_and_upload_file)
 
 bp = Blueprint("routes", __name__)
+minio_client = MinioClient()
 
 
 @bp.route("/health", methods=["GET"])
@@ -20,35 +23,72 @@ def health_check():
 
 @bp.route("/upload", methods=["POST"])
 def upload_results():
-    # Проверяем обязательное поле run_name
-    run_name = request.form.get("run_name")
-    if not run_name:
-        return jsonify({"error": "Поле run_name обязательно"}), 400
+    try:
+        # Получаем файлы из запроса
+        files = request.files.getlist("files")
+        if not files or all(f.filename == "" for f in files):
+            return jsonify({"error": "Необходимо загрузить хотя бы один файл"}), 400
 
-    # Получаем файлы из запроса
-    files = request.files.getlist("files")
-    if not files or all(f.filename == "" for f in files):
-        return jsonify({"error": "Необходимо загрузить хотя бы один файл"}), 400
+        # Создаем запись в БД с временным run_name
+        default_run_name = "TempName"
+        new_result = TestResult(
+            run_name=default_run_name,
+            start_date=datetime.now(),
+            status="pending",
+            file_link="",  # Временно пусто, так как ссылки пока нет
+        )
+        db.session.add(new_result)
+        db.session.commit()
 
-    # Создаем уникальную папку для прогонов
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"run_{run_name}_{timestamp}"
-    result_folder = os.path.join(UPLOAD_FOLDER, folder_name)
-    os.makedirs(result_folder, exist_ok=True)
+        # Получаем сгенерированный run_id и формируем run_name
+        run_id = new_result.id
+        # run_id = TEMP_RUN_ID
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_name = f"run_{run_id}_{timestamp}"
 
-    # Сохраняем файлы
-    for file in files:
-        if file and allowed_file(file.filename):
-            filename = secure_filename(file.filename)
-            file_path = os.path.join(result_folder, filename)
-            file.save(file_path)
+        # Обновляем run_name в БД
+        new_result.run_name = run_name
+        db.session.commit()
 
-    # Создаем запись о прогоне в базе данных
-    test_run = TestRun(run_name=run_name, result_folder=result_folder)
-    db.session.add(test_run)
-    db.session.commit()
+        # Создаем папку для сохранения результатов
+        result_folder = os.path.join(UPLOAD_FOLDER, run_name)
+        os.makedirs(result_folder, exist_ok=True)
 
-    return jsonify({"run_id": test_run.id, "message": "Файлы успешно загружены"}), 201
+    except Exception as e:
+        current_app.logger.error(
+            f"Ошибка при создании записи базы данных или папки результатов: {str(e)}"
+        )
+        return (
+            jsonify(
+                {"error": "Ошибка при создании записи в базе данных или директории"}
+            ),
+            500,
+        )
+    try:
+        # Сохраняем файлы
+        for file in files:
+            if file and allowed_file(file.filename):
+                process_and_upload_file(run_name, file)
+
+        file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{run_name}"
+
+        # Обновляем file_link в PostgreSQL
+        new_result.file_link = file_link
+        db.session.commit()
+    except Exception as e:
+        current_app.logger.error(
+            f"Ошибка при обработке файлов или обновлении ссылки на файл в базе данных: {str(e)}"
+        )
+        return (
+            jsonify(
+                {
+                    "error": "Ошибка при обработке файлов или обновлении ссылки на файл в базе данных"
+                }
+            ),
+            500,
+        )
+
+    return jsonify({"run_id": run_id, "message": "Файлы успешно загружены"}), 201
 
 
 @bp.route(rule="/", methods=["GET"])
