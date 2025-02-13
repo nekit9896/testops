@@ -8,7 +8,7 @@ from werkzeug.utils import secure_filename
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER
+from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER, TEMP_RUN_ID
 from helpers import allowed_file, create_reports_list, get_report
 
 bp = Blueprint("routes", __name__)
@@ -20,77 +20,68 @@ def health_check():
     return jsonify({"status": "ok"}), 200
 
 
-# @bp.route('/upload', methods=['POST'])
-# def upload_results():
-#     files = request.files.getlist('files')
-#     run_id = request.form.get('run_id')
-#     run_date = datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-#     run_name = f"test_run-{run_id}-{run_date}"
-#     folder_path = f"allure-results/{run_name}/"
-#
-#     for file in files:
-#         try:
-#             file_path = folder_path + file.filename
-#             minio_client.put_object(BUCKET_NAME, file_path, file.stream, file.content_length)
-#         except S3Error as e:
-#             return jsonify({"error": str(e)}), 500
-#
-#     file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{folder_path}"
-#
-#     # Save metadata to PostgreSQL
-#     new_result = TestResult(
-#         run_name=run_name,
-#         start_date=datetime.now(),
-#         end_date=datetime.now(),
-#         status='pending',
-#         file_link=file_link
-#     )
-#     db.session.add(new_result)
-#     db.session.commit()
-
-
 @bp.route("/upload", methods=["POST"])
 def upload_results():
-    # Проверяем обязательное поле run_name
-    run_name = request.form.get("run_name")
-    if not run_name:
-        return jsonify({"error": "Поле run_name обязательно"}), 400
 
     # Получаем файлы из запроса
     files = request.files.getlist("files")
     if not files or all(f.filename == "" for f in files):
         return jsonify({"error": "Необходимо загрузить хотя бы один файл"}), 400
 
-    # Создаем уникальную папку для прогонов
+    # # Создаем запись в БД с временным run_name
+    # default_run_name = 'TempName'
+    # new_result = TestResult(
+    #     run_name=default_run_name,
+    #     start_date=datetime.now(),
+    #     status='pending',
+    #     file_link=''  # Временно пусто, так как ссылки пока нет
+    # )
+    # db.session.add(new_result)
+    # db.session.commit()
+
+    # Получаем сгенерированный run_id и формируем run_name
+    # run_id = new_result.id
+    run_id = TEMP_RUN_ID
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    folder_name = f"run_{run_name}_{timestamp}"
-    result_folder = os.path.join(UPLOAD_FOLDER, folder_name)
+    run_name = f"run_{run_id}_{timestamp}"
+
+    # # Обновляем run_name в БД
+    # new_result.run_name = run_name
+    # db.session.commit()
+
+    # Создаем папку для сохранения результатов
+    result_folder = os.path.join(UPLOAD_FOLDER, run_name)
     os.makedirs(result_folder, exist_ok=True)
 
     # Сохраняем файлы
     for file in files:
         if file and allowed_file(file.filename):
             filename = secure_filename(file.filename)
+            file_path = f"{run_name}/{filename}"
 
             # Открываем поток файла без сохранения на диск
             file_stream = file.stream
             content_length = len(file.read())
             file.stream.seek(0)  # Сбрасываем указатель после подсчета длины
 
+            # Проверяем что бакет существует
+            minio_client.ensure_bucket_exists(BUCKET_NAME)
+
             # Загрузка файла в MinIO
             minio_client.put_object(
                 bucket_name=BUCKET_NAME,
-                file_path=f"{run_name}/{filename}",
+                file_path=file_path,
                 file_stream=file_stream,
                 content_length=content_length,
             )
 
-    # Создаем запись о прогоне в базе данных
-    test_run = TestResult(run_name=run_name, result_folder=result_folder)
-    db.session.add(test_run)
-    db.session.commit()
+    file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{run_name}"
+    # Обновляем file_link в БД
+    # new_result.file_link = file_link
+    # db.session.commit()
 
-    return jsonify({"run_id": test_run.id, "message": "Файлы успешно загружены"}), 201
+
+    return jsonify({"run_id": file_link, "message": "Файлы успешно загружены"}), 201
 
 
 @bp.route(rule="/", methods=["GET"])

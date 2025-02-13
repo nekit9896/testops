@@ -1,13 +1,16 @@
 import os
 import subprocess
 
+from minio import S3Error
 from werkzeug.utils import secure_filename
 
 from app import db
 from app.models import TestResult
+from app.clients import MinioClient
 from constants import (ALLOWED_EXTENSIONS, ALLURE_REPORT_FOLDER_NAME,
                        ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME)
 
+minio_client = MinioClient()
 
 def allowed_file(filename):
     return "." in filename and filename.rsplit(".", 1)[1].lower() in ALLOWED_EXTENSIONS

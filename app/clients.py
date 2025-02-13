@@ -2,7 +2,7 @@
 import logging
 import os
 
-from minio import Minio
+from minio import Minio, S3Error
 
 logging.basicConfig(level=logging.DEBUG)
 
@@ -18,6 +18,16 @@ class MinioClient:
             secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
             secure=False,  # True, если используется HTTPS
         )
+    def ensure_bucket_exists(self, bucket_name):
+        """Создает бакет, если его нет."""
+        try:
+            if not self.minio_client.bucket_exists(bucket_name):
+                self.minio_client.make_bucket(bucket_name)
+                print(f"Bucket '{bucket_name}' успешно создан.")
+            else:
+                print(f"Bucket '{bucket_name}' уже существует.")
+        except S3Error as e:
+            print(f"Ошибка при создании бакета: {e}")
 
     def put_object(self, bucket_name, file_path, file_stream, content_length):
         self.minio_client.put_object(

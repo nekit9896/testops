@@ -3,9 +3,9 @@ from flask_sqlalchemy import SQLAlchemy
 db = SQLAlchemy()
 
 
-# TestResults model (moves SQL logic to ORM layer)
+# TestResults model
 class TestResult(db.Model):
-    __tablename__ = "test_results"
+    __tablename__ = "testrun_results"
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_name = db.Column(db.String(255), nullable=False)

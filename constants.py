@@ -1,7 +1,7 @@
 PORT = 5000
 HOST = "0.0.0.0"
 UPLOAD_FOLDER = "allure-results"
-ALLOWED_EXTENSIONS = {"html", "json"}
+ALLOWED_EXTENSIONS = {"html", "json", "txt"}
 
 ALLURE_REPORT_NAME = "index.html"
 
@@ -11,3 +11,5 @@ ALLURE_RESULT_FOLDER_NAME = (
 )
 
 BUCKET_NAME = "allure-results-bucket"
+
+TEMP_RUN_ID = 5557
