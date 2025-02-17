@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 
@@ -126,3 +127,21 @@ def process_and_upload_file(run_name, file):
     except Exception as e:
         current_app.logger.error(f"Error processing file {file.filename}: {str(e)}")
         raise
+
+
+def check_all_tests_passed_run(files):
+    try:
+        for file in files:
+            # Проверяем если файл заканчивается на "result.json"
+            if file.filename.endswith("result.json"):
+                # Получаем содержимое файла
+                content = file.read().decode("utf-8")
+                data = json.loads(content)
+                # Проверяем статус
+                if "status" not in data or data["status"] != "passed":
+                    return "fail"
+        return "passed"
+    except Exception as e:
+        # Логируем ошибку и возвращаем "fail"
+        current_app.logger.error(f"Ошибка при проверке статуса: {str(e)}")
+        return "fail"

@@ -13,3 +13,5 @@ ALLURE_RESULT_FOLDER_NAME = (
 BUCKET_NAME = "allure-results-bucket"
 
 TEMP_RUN_ID = 5557
+
+DATE_FORMAT = "%Y%m%d_%H%M%S"

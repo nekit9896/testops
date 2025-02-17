@@ -7,9 +7,10 @@ from flask import (Blueprint, current_app, jsonify, render_template, request,
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER
-from helpers import (allowed_file, create_reports_list, get_report,
-                     process_and_upload_file)
+from constants import (ALLURE_REPORT_NAME, BUCKET_NAME, DATE_FORMAT,
+                       UPLOAD_FOLDER)
+from helpers import (allowed_file, check_all_tests_passed_run,
+                     create_reports_list, get_report, process_and_upload_file)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -37,32 +38,50 @@ def upload_results():
             file_link="",  # Временно пусто, так как ссылки пока нет
         )
         db.session.add(new_result)
-        db.session.commit()
+        db.session.commit()  # Коммитим первый этап работы с БД
 
         # Получаем сгенерированный run_id и формируем run_name
         run_id = new_result.id
         # run_id = TEMP_RUN_ID
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        timestamp = datetime.now().strftime(DATE_FORMAT)
         run_name = f"run_{run_id}_{timestamp}"
 
         # Обновляем run_name в БД
         new_result.run_name = run_name
-        db.session.commit()
+        db.session.commit()  # Коммитим обновление run_name
+    except Exception as e:
+        db.session.rollback()  # Откат транзакции при любой ошибке в работе с БД
+        current_app.logger.error(f"Ошибка при создании записи базы данных: {str(e)}")
+        return jsonify({"error": "Ошибка при создании записи в базе данных"}), 500
 
+    # Операции с файловой системой
+    try:
         # Создаем папку для сохранения результатов
         result_folder = os.path.join(UPLOAD_FOLDER, run_name)
         os.makedirs(result_folder, exist_ok=True)
-
-    except Exception as e:
+    except OSError as e:
         current_app.logger.error(
-            f"Ошибка при создании записи базы данных или папки результатов: {str(e)}"
+            f"Ошибка при создании директории для результатов: {str(e)}"
         )
         return (
-            jsonify(
-                {"error": "Ошибка при создании записи в базе данных или директории"}
-            ),
+            jsonify({"error": "Ошибка при создании директории для сохранения файлов"}),
             500,
         )
+
+    # Определяем общий статус тест рана
+    status = check_all_tests_passed_run(files)
+
+    try:
+        new_result.status = status
+        db.session.commit()
+    except Exception as e:
+        # Логируем ошибку и откатываем транзакцию в случае исключения
+        db.session.rollback()
+        current_app.logger.error(
+            f"Ошибка при сохранении статуса тест рана в базу данных: {str(e)}"
+        )
+        return jsonify({"error": "Ошибка обработки данных"}), 500
+
     try:
         # Сохраняем файлы
         for file in files:
