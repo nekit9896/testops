@@ -1,27 +1,16 @@
 import os
 from datetime import datetime
 
-from flask import (
-    Blueprint,
-    current_app,
-    jsonify,
-    render_template,
-    request,
-    send_from_directory,
-)
+from flask import (Blueprint, current_app, jsonify, render_template, request,
+                   send_from_directory)
 
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from constants import ALLURE_REPORT_NAME, BUCKET_NAME, DATE_FORMAT, UPLOAD_FOLDER, STATUS_KEY, START_RUN_KEY, \
-    STOP_RUN_KEY
-from helpers import (
-    allowed_file,
-    check_all_tests_passed_run,
-    create_reports_list,
-    get_report,
-    process_and_upload_file,
-)
+from constants import (ALLURE_REPORT_NAME, BUCKET_NAME, DATE_FORMAT,
+                       START_RUN_KEY, STATUS_KEY, STOP_RUN_KEY, UPLOAD_FOLDER)
+from helpers import (allowed_file, check_all_tests_passed_run,
+                     create_reports_list, get_report, process_and_upload_file)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()

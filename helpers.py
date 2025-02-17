@@ -7,22 +7,11 @@ from flask import current_app
 from werkzeug.utils import secure_filename
 
 from app.clients import MinioClient
-from constants import (
-    ALLOWED_EXTENSIONS,
-    ALLURE_REPORT_FOLDER_NAME,
-    ALLURE_REPORT_NAME,
-    ALLURE_RESULT_FOLDER_NAME,
-    BUCKET_NAME,
-    STATUS_KEY,
-    STATUS_FAIL,
-    STATUS_PASS,
-    ENCODING,
-    RESULT_NAMING,
-    CONTAINER_NAMING,
-    START_RUN_KEY,
-    STOP_RUN_KEY,
-    DATE_FORMAT, TIMESTAMP_DIVISOR,
-)
+from constants import (ALLOWED_EXTENSIONS, ALLURE_REPORT_FOLDER_NAME,
+                       ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME,
+                       BUCKET_NAME, CONTAINER_NAMING, DATE_FORMAT, ENCODING,
+                       RESULT_NAMING, START_RUN_KEY, STATUS_FAIL, STATUS_KEY,
+                       STATUS_PASS, STOP_RUN_KEY, TIMESTAMP_DIVISOR)
 
 minio_client = MinioClient()
 
@@ -155,7 +144,9 @@ def parse_json_file(file):
 
 def format_timestamp(timestamp):
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
-    return datetime.datetime.fromtimestamp(timestamp / TIMESTAMP_DIVISOR).strftime(DATE_FORMAT)
+    return datetime.datetime.fromtimestamp(timestamp / TIMESTAMP_DIVISOR).strftime(
+        DATE_FORMAT
+    )
 
 
 def check_all_tests_passed_run(files):
