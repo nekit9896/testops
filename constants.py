@@ -15,3 +15,12 @@ BUCKET_NAME = "allure-results-bucket"
 TEMP_RUN_ID = 5557
 
 DATE_FORMAT = "%Y%m%d_%H%M%S"
+STATUS_KEY = "status"
+STATUS_PASS = "passed"
+STATUS_FAIL = "fail"
+ENCODING = "utf-8"
+RESULT_NAMING = "result.json"
+CONTAINER_NAMING = "container.json"
+START_RUN_KEY = "start"
+STOP_RUN_KEY = "stop"
+TIMESTAMP_DIVISOR = 1000

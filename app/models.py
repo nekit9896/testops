@@ -9,7 +9,7 @@ class TestResult(db.Model):
 
     id = db.Column(db.Integer, primary_key=True, autoincrement=True)
     run_name = db.Column(db.String(255), nullable=False)
-    start_date = db.Column(db.DateTime, nullable=False)
+    start_date = db.Column(db.DateTime, nullable=True)
     end_date = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(50), nullable=False)
     file_link = db.Column(db.String(255), nullable=False)

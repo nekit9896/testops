@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import subprocess
@@ -6,9 +7,22 @@ from flask import current_app
 from werkzeug.utils import secure_filename
 
 from app.clients import MinioClient
-from constants import (ALLOWED_EXTENSIONS, ALLURE_REPORT_FOLDER_NAME,
-                       ALLURE_REPORT_NAME, ALLURE_RESULT_FOLDER_NAME,
-                       BUCKET_NAME)
+from constants import (
+    ALLOWED_EXTENSIONS,
+    ALLURE_REPORT_FOLDER_NAME,
+    ALLURE_REPORT_NAME,
+    ALLURE_RESULT_FOLDER_NAME,
+    BUCKET_NAME,
+    STATUS_KEY,
+    STATUS_FAIL,
+    STATUS_PASS,
+    ENCODING,
+    RESULT_NAMING,
+    CONTAINER_NAMING,
+    START_RUN_KEY,
+    STOP_RUN_KEY,
+    DATE_FORMAT, TIMESTAMP_DIVISOR,
+)
 
 minio_client = MinioClient()
 
@@ -129,19 +143,47 @@ def process_and_upload_file(run_name, file):
         raise
 
 
-def check_all_tests_passed_run(files):
+def parse_json_file(file):
+    """Парсит содержимое файла и возвращает json данные."""
     try:
-        for file in files:
-            # Проверяем если файл заканчивается на "result.json"
-            if file.filename.endswith("result.json"):
-                # Получаем содержимое файла
-                content = file.read().decode("utf-8")
-                data = json.loads(content)
-                # Проверяем статус
-                if "status" not in data or data["status"] != "passed":
-                    return "fail"
-        return "passed"
+        content = file.read().decode(ENCODING)
+        return json.loads(content)
     except Exception as e:
-        # Логируем ошибку и возвращаем "fail"
-        current_app.logger.error(f"Ошибка при проверке статуса: {str(e)}")
-        return "fail"
+        current_app.logger.error(f"Ошибка при чтении файла {file.filename}: {str(e)}")
+        return None
+
+
+def format_timestamp(timestamp):
+    """Форматирует временную метку в миллисекундах в строку по заданному формату."""
+    return datetime.datetime.fromtimestamp(timestamp / TIMESTAMP_DIVISOR).strftime(DATE_FORMAT)
+
+
+def check_all_tests_passed_run(files):
+    status = STATUS_PASS
+    start_time, stop_time = None, None
+
+    for file in files:
+        if file.filename.endswith(RESULT_NAMING):
+            data = parse_json_file(file)
+            if (
+                data is None
+                or STATUS_KEY not in data
+                or data[STATUS_KEY] != STATUS_PASS
+            ):
+                status = STATUS_FAIL
+
+        elif file.filename.endswith(CONTAINER_NAMING):
+            data = parse_json_file(file)
+            if data:
+                start_time = data.get(START_RUN_KEY)
+                stop_time = data.get(STOP_RUN_KEY)
+
+    # Конвертация времени из миллисекунд в нужный формат
+    start_time_str = format_timestamp(start_time) if start_time else None
+    stop_time_str = format_timestamp(stop_time) if stop_time else None
+
+    return {
+        STATUS_KEY: status,
+        START_RUN_KEY: start_time_str,
+        STOP_RUN_KEY: stop_time_str,
+    }

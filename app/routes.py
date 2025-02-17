@@ -1,16 +1,27 @@
 import os
 from datetime import datetime
 
-from flask import (Blueprint, current_app, jsonify, render_template, request,
-                   send_from_directory)
+from flask import (
+    Blueprint,
+    current_app,
+    jsonify,
+    render_template,
+    request,
+    send_from_directory,
+)
 
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from constants import (ALLURE_REPORT_NAME, BUCKET_NAME, DATE_FORMAT,
-                       UPLOAD_FOLDER)
-from helpers import (allowed_file, check_all_tests_passed_run,
-                     create_reports_list, get_report, process_and_upload_file)
+from constants import ALLURE_REPORT_NAME, BUCKET_NAME, DATE_FORMAT, UPLOAD_FOLDER, STATUS_KEY, START_RUN_KEY, \
+    STOP_RUN_KEY
+from helpers import (
+    allowed_file,
+    check_all_tests_passed_run,
+    create_reports_list,
+    get_report,
+    process_and_upload_file,
+)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -33,7 +44,8 @@ def upload_results():
         default_run_name = "TempName"
         new_result = TestResult(
             run_name=default_run_name,
-            start_date=datetime.now(),
+            start_date="",  # Временно пусто
+            end_date="",  # Временно пусто
             status="pending",
             file_link="",  # Временно пусто, так как ссылки пока нет
         )
@@ -69,10 +81,12 @@ def upload_results():
         )
 
     # Определяем общий статус тест рана
-    status = check_all_tests_passed_run(files)
+    test_run_info = check_all_tests_passed_run(files)
 
     try:
-        new_result.status = status
+        new_result.status = test_run_info.get(STATUS_KEY)
+        new_result.start_date = test_run_info.get(START_RUN_KEY)
+        new_result.end_date = test_run_info.get(STOP_RUN_KEY)
         db.session.commit()
     except Exception as e:
         # Логируем ошибку и откатываем транзакцию в случае исключения
