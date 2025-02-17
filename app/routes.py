@@ -80,7 +80,7 @@ def upload_results():
             500,
         )
 
-    # Определяем общий статус тест рана
+    # Определяем общий статус и длительность тест рана
     test_run_info = check_all_tests_passed_run(files)
 
     try:
