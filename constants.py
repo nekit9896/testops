@@ -10,7 +10,7 @@ ALLURE_RESULT_FOLDER_NAME = (
     "allure-results"  # Здесь в отдельных директориях будут находиться
 )
 
-BUCKET_NAME = "allure-results-bucket"
+ALLURE_RESULT_BUCKET_NAME = "allure-results-bucket"
 
 TEMP_RUN_ID = 5557
 
@@ -24,3 +24,4 @@ CONTAINER_NAMING = "container.json"
 START_RUN_KEY = "start"
 STOP_RUN_KEY = "stop"
 TIMESTAMP_DIVISOR = 1000
+DEFAULT_RUN_NAME = "TempName"
