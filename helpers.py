@@ -50,7 +50,7 @@ def get_folder_names(directory: str) -> list[str]:
 def create_reports_list():
     """Функция получения списка отчетов."""
     # Получает путь к директории с отчетами
-    results_folder_path = get_project_subdir_path(const.ALLURE_RESULT_FOLDER_NAME)
+    results_folder_path = get_project_subdir_path(const.ALLURE_RESULTS_FOLDER_NAME)
     # Получает имена директорий с отчетами
     result_names = get_folder_names(results_folder_path)
     return result_names
@@ -85,7 +85,7 @@ def get_report(result_dir_name: str) -> str:
     Получает директорию, в которой находится html отчет
     """
     # Получает путь к папке с результатами прогонов
-    results_dir_path = get_project_subdir_path(const.ALLURE_RESULT_FOLDER_NAME)
+    results_dir_path = get_project_subdir_path(const.ALLURE_RESULTS_FOLDER_NAME)
     # Получает путь к папке с отчетами
     reports_dir_path = get_project_subdir_path(const.ALLURE_REPORT_FOLDER_NAME)
     # Получает путь к папке с результатами конкретного прогона

@@ -6,7 +6,7 @@ ALLOWED_EXTENSIONS = {"html", "json", "txt"}
 ALLURE_REPORT_NAME = "index.html"
 
 ALLURE_REPORT_FOLDER_NAME = "reports"  # Отсюда читаются готовые отчеты
-ALLURE_RESULT_FOLDER_NAME = (
+ALLURE_RESULTS_FOLDER_NAME = (
     "allure-results"  # Здесь в отдельных директориях будут находиться
 )
 
