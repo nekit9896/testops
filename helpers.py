@@ -145,9 +145,9 @@ def parse_json_file(file):
 
 def format_timestamp(timestamp):
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
-    return datetime.datetime.fromtimestamp(
-        timestamp / const.TIMESTAMP_DIVISOR
-    ).strftime(const.DATE_FORMAT)
+    return datetime.fromtimestamp(timestamp / const.TIMESTAMP_DIVISOR).strftime(
+        const.DATE_FORMAT
+    )
 
 
 def check_all_tests_passed_run(files):
@@ -184,7 +184,7 @@ def check_all_tests_passed_run(files):
 def create_temporary_test_result():
     """Создает временную запись в БД с тестовым запуском."""
     new_result = TestResult(
-        run_name=f"{const.DEFAULT_RUN_NAME}",
+        run_name=f"{const.DEFAULT_RUN_NAME}_{datetime.now()}",
         start_date="",
         end_date="",
         status="",
