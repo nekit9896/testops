@@ -1,15 +1,12 @@
-import os
 from datetime import datetime
 
 from flask import (Blueprint, current_app, jsonify, render_template, request,
                    send_from_directory)
 
+import constants as const
+import helpers
 from app import db
 from app.clients import MinioClient
-from app.models import TestResult
-from constants import ALLURE_REPORT_NAME, BUCKET_NAME, UPLOAD_FOLDER
-from helpers import (allowed_file, create_reports_list, get_report,
-                     process_and_upload_file)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -22,62 +19,60 @@ def health_check():
 
 @bp.route("/upload", methods=["POST"])
 def upload_results():
+    """API-метод для загрузки файлов и создания тестового запуска."""
     try:
-        # Получаем файлы из запроса
+        # Шаг 1. Получаем файлы из запроса и проверяем их наличие
         files = request.files.getlist("files")
         if not files or all(f.filename == "" for f in files):
             return jsonify({"error": "Необходимо загрузить хотя бы один файл"}), 400
 
-        # Создаем запись в БД с временным run_name
-        default_run_name = "TempName"
-        new_result = TestResult(
-            run_name=default_run_name,
-            start_date=datetime.now(),
-            status="pending",
-            file_link="",  # Временно пусто, так как ссылки пока нет
-        )
-        db.session.add(new_result)
-        db.session.commit()
-
-        # Получаем сгенерированный run_id и формируем run_name
-        run_id = new_result.id
-        # run_id = TEMP_RUN_ID
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_name = f"run_{run_id}_{timestamp}"
-
-        # Обновляем run_name в БД
-        new_result.run_name = run_name
-        db.session.commit()
-
-        # Создаем папку для сохранения результатов
-        result_folder = os.path.join(UPLOAD_FOLDER, run_name)
-        os.makedirs(result_folder, exist_ok=True)
+        # Шаг 2. Создаем временную запись о запуске автотестов в БД
+        new_result = helpers.create_temporary_test_result()
 
     except Exception as e:
+        # Откат транзакции и логирование ошибки при работе с БД
+        db.session.rollback()
+        current_app.logger.error(f"Ошибка при создании записи базы данных: {str(e)}")
+        return jsonify({"error": "Ошибка обработки данных"}), 500
+
+    # Шаг 3. Анализируем файлы и извлекаем параметры запуска автотестов
+    test_run_info = helpers.check_all_tests_passed_run(files)
+
+    try:
+        # Шаг 4. Формируем уникальное имя для запуска автотестов и обновляем данные в БД
+        helpers.update_test_result(new_result, test_run_info)
+    except Exception as e:
+        # Логируем ошибку и откатываем транзакцию в случае исключения
+        db.session.rollback()
         current_app.logger.error(
-            f"Ошибка при создании записи базы данных или папки результатов: {str(e)}"
+            f"Ошибка при сохранении статуса тест рана в базу данных: {str(e)}"
+        )
+        return jsonify({"error": "Ошибка обработки данных"}), 500
+
+    try:
+        # Шаг 5. Создаем папку для сохранения файлов на сервере
+        helpers.create_result_directory(new_result.run_name)
+    except OSError as e:
+        current_app.logger.error(
+            f"Ошибка при создании директории для результатов: {str(e)}"
         )
         return (
-            jsonify(
-                {"error": "Ошибка при создании записи в базе данных или директории"}
-            ),
+            jsonify({"error": "Ошибка при создании директории для сохранения файлов"}),
             500,
         )
+
     try:
-        # Сохраняем файлы
+        # Шаг 6. Обрабатываем файлы и обновляем ссылку на них в БД
         for file in files:
-            if file and allowed_file(file.filename):
-                process_and_upload_file(run_name, file)
+            if file and helpers.allowed_file(file.filename):
+                helpers.process_and_upload_file(new_result.run_name, file)
 
-        file_link = f"{minio_client.minio_endpoint}/{BUCKET_NAME}/{run_name}"
-
+        file_link = f"{minio_client.minio_endpoint}/{const.ALLURE_RESULT_BUCKET_NAME}/{new_result.run_name}"
         # Обновляем file_link в PostgreSQL
         new_result.file_link = file_link
         db.session.commit()
     except Exception as e:
-        current_app.logger.error(
-            f"Ошибка при обработке файлов или обновлении ссылки на файл в базе данных: {str(e)}"
-        )
+        current_app.logger.error(f"Ошибка при обработке файлов: {str(e)}")
         return (
             jsonify(
                 {
@@ -87,7 +82,7 @@ def upload_results():
             500,
         )
 
-    return jsonify({"run_id": run_id, "message": "Файлы успешно загружены"}), 201
+    return jsonify({"run_id": new_result.id, "message": "Файлы успешно загружены"}), 201
 
 
 @bp.route(rule="/", methods=["GET"])
@@ -110,7 +105,7 @@ def get_reports():
     Возвращает страницу со списком отчетов
     """
     # Получает имена директорий с отчетами
-    result_names = create_reports_list()
+    result_names = helpers.create_reports_list()
     reports = []
     # Для каждого прогона заполняем словарь
     if result_names:
@@ -148,9 +143,9 @@ def view_report(result_id: int):
     # Получает название директории с отчетом по id
     result_dir_name = str(result_id)
     # Получает директорию, в которой находится отчет
-    report_dir = get_report(result_dir_name)
+    report_dir = helpers.get_report(result_dir_name)
     try:
-        return send_from_directory(report_dir, ALLURE_REPORT_NAME), 200
+        return send_from_directory(report_dir, const.ALLURE_REPORT_NAME), 200
 
     except FileNotFoundError:
         return jsonify({"error": "Нет такого отчета"}), 404
