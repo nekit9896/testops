@@ -4,9 +4,9 @@ HOST = "0.0.0.0"
 
 # Folders
 UPLOAD_FOLDER = "allure-results"
-ALLURE_REPORT_FOLDER_NAME = "reports" # Отсюда читаются готовые отчеты
+ALLURE_REPORT_FOLDER_NAME = "reports"  # Отсюда читаются готовые отчеты
 ALLURE_RESULT_FOLDER_NAME = (
-    "allure-results" # Здесь в отдельных директориях будут находиться данные о прогоне
+    "allure-results"  # Здесь в отдельных директориях будут находиться данные о прогоне
 )
 
 # Files
@@ -16,7 +16,7 @@ LOG_FILE_NAME = "logs.json"
 
 # MinIO
 ALLURE_RESULTS_BUCKET_NAME = "allure-results-bucket"
-TEMP_RUN_ID = 5557 # Тестовый айди прогона для запуска без PostgreSQL
+TEMP_RUN_ID = 5557  # Тестовый айди прогона для запуска без PostgreSQL
 
 # Front
 TEMPLATE_INDEX = "index.html"

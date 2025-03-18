@@ -1,6 +1,4 @@
-from flask_migrate import Migrate
-
-from app import create_app, db
+from app import create_app
 from constants import HOST, PORT
 
 app = create_app()

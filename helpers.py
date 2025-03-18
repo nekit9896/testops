@@ -21,8 +21,8 @@ def allowed_file(filename):
     По точке находим расширение файла и проверяем на соответствие списка разрешенных в ALLOWED_EXTENSIONS
     """
     return (
-            "." in filename
-            and filename.rsplit(".", 1)[1].lower() in const.ALLOWED_EXTENSIONS
+        "." in filename
+        and filename.rsplit(".", 1)[1].lower() in const.ALLOWED_EXTENSIONS
     )
 
 

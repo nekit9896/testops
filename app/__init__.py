@@ -10,6 +10,7 @@ db = SQLAlchemy()
 # Инициализация миграций
 migrate = Migrate()
 
+
 def create_app():
     """
     Создает и конфигурирует экземпляр приложения Flask
@@ -23,7 +24,7 @@ def create_app():
     :return: возвращает сконфигурированный объект Flask приложения
     """
     # При инициализации указываете папки с html и css в корне проекта
-    app = Flask(__name__, template_folder='../templates', static_folder='../static')
+    app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.from_object(Config)
     # Инициализирует логер
     logger = init_logger()

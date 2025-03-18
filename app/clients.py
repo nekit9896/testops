@@ -7,6 +7,7 @@ from logger import init_logger
 
 logger = init_logger()
 
+
 # Инициализация MinIO client
 class MinioClient:
     def __init__(self):

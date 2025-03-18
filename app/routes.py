@@ -1,13 +1,7 @@
 from datetime import datetime
 
-from flask import (
-    Blueprint,
-    abort,
-    jsonify,
-    render_template,
-    request,
-    send_from_directory,
-)
+from flask import (Blueprint, abort, jsonify, render_template, request,
+                   send_from_directory)
 from sqlalchemy.exc import DatabaseError
 
 import constants as const
@@ -21,9 +15,10 @@ bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
 logger = init_logger()
 
-@bp.route('/', methods=['GET'] )
-@bp.route('/index', methods=['GET'] )
-@bp.route('/index/', methods=['GET'] )
+
+@bp.route("/", methods=["GET"])
+@bp.route("/index", methods=["GET"])
+@bp.route("/index/", methods=["GET"])
 def home():
     """
     Домашняя страница
@@ -32,13 +27,15 @@ def home():
     logger.info("Обработан запрос на главную страницу")
     return response
 
-@bp.route('/health', methods=['GET'] )
+
+@bp.route("/health", methods=["GET"])
 def health_check():
     response = jsonify({"status": "ok"})
     logger.info("Обработан запрос на проверку доступности")
     return response
 
-@bp.route('/upload', methods=['POST'] )
+
+@bp.route("/upload", methods=["POST"])
 def upload_results():
     """
     API-метод для загрузки файлов и создания тестового запуска
@@ -46,7 +43,7 @@ def upload_results():
     try:
         # Шаг 1. Получаем файлы из запроса и проверяем их наличие
         files = request.files.getlist("files")
-        if not files or all(f.filename == '' for f in files):
+        if not files or all(f.filename == "" for f in files):
             logger.error("Необходимо загрузить хотя бы один файл")
             abort(400, description="Необходимо загрузить хотя бы один файл")
 
