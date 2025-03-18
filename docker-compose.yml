@@ -9,9 +9,7 @@ services:
       - postgres-data:/var/lib/postgresql/data
 
   flask-app:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: nekit9896/testops-flask-app:v0.0.1
     container_name: flask_app
     ports:
       - "5000:5000"

@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+
+{% block head %}
+<title>Ошибка 408 — Время истекло</title>
+{% endblock %}
+
+{% block main %}
+<main class="flex-1 p-5">
+    <div class="text-center">
+        <h1 class="text-9xl font-bold text-gray-800">408</h1>
+        <p class="text-2xl font-semibold text-gray-600">Время ожидания запроса истекло</p>
+        <p class="mt-2 text-gray-500">Время ожидания запроса истекло.</p>
+        <a href="/" class="mt-6 inline-block rounded bg-blue-500 px-6 py-2 text-white hover:bg-blue-700">
+            Вернуться на главную
+        </a>
+    </div>
+</main>
+{% endblock %}

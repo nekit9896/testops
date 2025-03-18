@@ -1,0 +1,18 @@
+{% extends 'base.html' %}
+
+{% block head %}
+<title>Ошибка 500 — Ошибка сервера</title>
+{% endblock %}
+
+{% block main %}
+<main class="flex-1 p-5">
+    <div class="text-center">
+        <h1 class="text-9xl font-bold text-gray-800">500</h1>
+        <p class="text-2xl font-semibold text-gray-600">Ошибка сервера</p>
+        <p class="mt-2 text-gray-500">Что-то пошло не так.</p>
+        <a href="/" class="mt-6 inline-block rounded bg-blue-500 px-6 py-2 text-white hover:bg-blue-700">
+            Вернуться на главную
+        </a>
+    </div>
+</main>
+{% endblock %}
