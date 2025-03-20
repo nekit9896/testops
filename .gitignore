@@ -6,3 +6,4 @@ __pycache__/
 *migrations/*
 .env
 *.pyc
+*logs*

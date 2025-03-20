@@ -6,7 +6,7 @@ services:
       - POSTGRESQL_USERNAME=testops
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
-      - postgres-data:/data
+      - postgresql-data:/data
 
   flask-app:
     image: nekit9896/testops-flask-app:v0.0.1
@@ -18,8 +18,8 @@ services:
       - FLASK_ENV=development
       # Переменные MinIO
       - MINIO_ENDPOINT=minio:9000
-      - MINIO_ACCESS_KEY=
-      - MINIO_SECRET_KEY=
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
       # Переменные PostgreSQL
       - POSTGRESQL_HOST=db
       - POSTGRESQL_PORT=5432
@@ -41,8 +41,8 @@ services:
       - "9005:9005"  # Проброс порта 9000 для Web UI
       - "9006:9006"  # Проброс порта 9001 для консоли MinIO (если используется)
     environment:
-      MINIO_ROOT_USER: youraccesskey
-      MINIO_ROOT_PASSWORD: yoursecretkey
+      - MINIO_ROOT_USER=minioadmin
+      - MINIO_ROOT_PASSWORD=minioadmin
     volumes:
       - minio-data:/data
     deploy:
