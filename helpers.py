@@ -237,12 +237,41 @@ def create_temporary_test_result():
         run_name=f"{const.DEFAULT_RUN_NAME}_{datetime.datetime.now()}",
         start_date="",
         end_date="",
-        status="",
+        status="pending",
         file_link="",
     )
     db.session.add(new_result)
     db.session.commit()  # Коммитим временную запись
     return new_result
+
+
+def create_temporary_test_result():
+    """Создает временную запись в БД с тестовым записком, создавая таблицу при необходимости."""
+    try:
+        # Создаем таблицу, если она еще не создана
+        if not db.engine.dialect.has_table(db.engine, TestResult.__tablename__):
+            db.create_all()
+
+        # Создаем новый тестовый результат
+        new_result = TestResult(
+            run_name=f"{const.DEFAULT_RUN_NAME}_{datetime.datetime.now()}",
+            start_date=None,
+            end_date=None,
+            status="pending",
+            file_link="",
+        )
+
+        # Добавляем и коммитим новую запись
+        db.session.add(new_result)
+        db.session.commit()
+
+        return new_result
+
+    except DatabaseError as error_msg:
+        # Обработка ошибки базы данных
+        db.session.rollback()
+        logger.exception("Ошибка при создании записи в базе данных", exc_info=error_msg)
+        raise
 
 
 def update_test_result(new_result, test_run_info):

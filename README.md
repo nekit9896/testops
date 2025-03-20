@@ -19,6 +19,12 @@ flask db migrate -m "Initail Migration"
 flask db upgrade
 
 
+## Быстродокер
+```bash
+docker build -t testops-flask-app .
+docker tag testops-flask-app vladimirovnm/testops-flask-app:v0.0.1
+docker push nekit9896/testops-flask-app:v0.0.1
+```
 
 пример запроса
 curl -X POST http://localhost:5000/upload -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\0477e9be-9f9a-4301-9792-784ae94c08bb-result.json"      -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\3383fa62-dce1-4ac2-abc6-ead40f3f4b7a-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\11327270-8aab-4d37-81b4-6488855be7f4-attachment.txt" -F "files=@C:\Users\ne
