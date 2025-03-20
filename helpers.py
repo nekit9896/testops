@@ -232,20 +232,6 @@ def check_all_tests_passed_run(files):
 
 
 def create_temporary_test_result():
-    """Создает временную запись в БД с тестовым записком."""
-    new_result = TestResult(
-        run_name=f"{const.DEFAULT_RUN_NAME}_{datetime.datetime.now()}",
-        start_date="",
-        end_date="",
-        status="pending",
-        file_link="",
-    )
-    db.session.add(new_result)
-    db.session.commit()  # Коммитим временную запись
-    return new_result
-
-
-def create_temporary_test_result():
     """Создает временную запись в БД с тестовым записком, создавая таблицу при необходимости."""
     try:
         # Создаем таблицу, если она еще не создана
