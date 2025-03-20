@@ -7,6 +7,7 @@ import constants as const
 import helpers
 from app import db
 from app.clients import MinioClient
+from app.models import TestResult
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -152,3 +153,23 @@ def view_report(result_id: int):
 
     except Exception as error:
         return jsonify({"error": str(error)}), 500
+
+
+@bp.route("/delete_test_run/<int:run_id>", methods=["DELETE"])
+def delete_test_run(run_id):
+    """
+    Маркирует тестран как удаленный по run_id.
+    ORM (Object-Relational Mapping), в нашем случае SQLAlchemy, позволяет обращаться к базе данных так,
+    будто это обычный Python-объект.
+    Метод получает объект TestResult по его первичному ключу (run_id),
+    и если объект существует, он помечает его как удаленный (is_deleted = True)
+    и сохраняет изменения в базе данных.
+    """
+    test_result = TestResult.query.get(run_id)
+
+    if test_result:
+        test_result.is_deleted = True
+        db.session.commit()
+        return jsonify({"message": "TestRun помечен как удаленный"}), 200
+    else:
+        return jsonify({"message": "TestRun не найден"}), 404
