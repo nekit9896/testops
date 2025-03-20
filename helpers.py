@@ -185,10 +185,10 @@ def parse_json_file(file):
 
 
 def format_timestamp(timestamp):
-    """Форматирует временные метки в миллисекундах в строки по заданному формату."""
-    return datetime.datetime.fromtimestamp(
-        timestamp // const.TIMESTAMP_DIVISOR
-    ).strftime(const.DATE_FORMAT)
+    """Форматирует временную метку в миллисекундах в строку по заданному формату."""
+    return datetime.fromtimestamp(timestamp / const.TIMESTAMP_DIVISOR).strftime(
+        const.DATE_FORMAT
+    )
 
 
 def check_all_tests_passed_run(files):
