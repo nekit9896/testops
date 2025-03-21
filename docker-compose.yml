@@ -7,9 +7,11 @@ services:
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
       - postgresql-data:/data
+    networks:
+      - minio-network
 
   flask-app:
-    image: nekit9896/testops-flask-app:v0.0.1
+    image: nekit9896/testops-flask-app:v0.0.2
     container_name: testops-flask-app
     ports:
       - "5000:5000"
@@ -21,6 +23,7 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
       # Переменные PostgreSQL
+      - SQLALCHEMY_DATABASE_URI=postgresql://testops:@db:5432/testops
       - POSTGRESQL_HOST=db
       - POSTGRESQL_PORT=5432
       - POSTGRESQL_DATABASE=testops
@@ -28,8 +31,13 @@ services:
     depends_on:
       - minio
       - db
-    volumes:
-      - .:/app
+#    command: >
+#      bash -c "wait-for-it.sh db:5432 -- flask db upgrade && flask run --host=0.0.0.0"
+#    command: >
+#      bash -c "
+#      flask db upgrade &&
+#      flask run --host=0.0.0.0
+#      "
     networks:
       - minio-network
 

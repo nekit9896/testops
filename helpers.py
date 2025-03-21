@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 
+from sqlalchemy import inspect
 from sqlalchemy.exc import DatabaseError
 from werkzeug.utils import secure_filename
 
@@ -235,7 +236,8 @@ def create_temporary_test_result():
     """Создает временную запись в БД с тестовым записком, создавая таблицу при необходимости."""
     try:
         # Создаем таблицу, если она еще не создана
-        if not db.engine.dialect.has_table(db.engine, TestResult.__tablename__):
+        inspector = inspect(db.engine)
+        if not inspector.has_table(TestResult.__tablename__):
             db.create_all()
 
         # Создаем новый тестовый результат

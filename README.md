@@ -13,17 +13,18 @@
 - проверяет, что файлы не пустые.
 
 ## Миграции
-
+```bash
 flask db init
 flask db migrate -m "Initail Migration"
 flask db upgrade
-
+```
 
 ## Быстродокер
 ```bash
 docker build -t testops-flask-app .
 docker tag testops-flask-app nekit9896/testops-flask-app:v0.0.1
 docker push nekit9896/testops-flask-app:v0.0.1
+docker exec -it testops-flask-app bash
 ```
 
 пример запроса
