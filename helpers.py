@@ -187,7 +187,7 @@ def parse_json_file(file):
 
 def format_timestamp(timestamp):
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
-    return datetime.fromtimestamp(timestamp / const.TIMESTAMP_DIVISOR).strftime(
+    return datetime.datetime.fromtimestamp(timestamp / const.TIMESTAMP_DIVISOR).strftime(
         const.DATE_FORMAT
     )
 
@@ -246,7 +246,7 @@ def create_temporary_test_result():
             start_date=None,
             end_date=None,
             status="pending",
-            file_link="",
+            file_link=None,
         )
 
         # Добавляем и коммитим новую запись

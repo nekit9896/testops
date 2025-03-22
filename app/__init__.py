@@ -3,9 +3,9 @@ from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 
 from logger import init_logger
-
 from .config import Config
 
+# Создаем объект SQLAlchemy
 db = SQLAlchemy()
 # Инициализация миграций
 migrate = Migrate()
@@ -26,6 +26,7 @@ def create_app():
     # При инициализации указываете папки с html и css в корне проекта
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.from_object(Config)
+
     # Инициализирует логер
     logger = init_logger()
 
@@ -40,11 +41,20 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
 
+    # Импортируем модели после инициализации db
+    from .models import TestResult
+
     # Регистрация маршрутов
     from .errors import errors_bp
     from .routes import bp as routes_bp
 
     app.register_blueprint(routes_bp)
     app.register_blueprint(errors_bp)
+
+    # # Создание таблиц
+    # from .models import TestResult
+    #
+    # with app.app_context():
+    #     db.create_all()
 
     return app

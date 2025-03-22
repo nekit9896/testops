@@ -1,6 +1,5 @@
 from flask_sqlalchemy import SQLAlchemy
-
-db = SQLAlchemy()
+from . import db
 
 
 # TestResults model
@@ -12,7 +11,7 @@ class TestResult(db.Model):
     start_date = db.Column(db.DateTime, nullable=True)
     end_date = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(50), nullable=False)
-    file_link = db.Column(db.String(255), nullable=False)
+    file_link = db.Column(db.String(255), nullable=True)
     is_deleted = db.Column(db.Boolean, default=False)
 
     def __repr__(self):
