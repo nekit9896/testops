@@ -3,6 +3,7 @@ import json
 import os
 import subprocess
 
+from sqlalchemy import inspect
 from sqlalchemy.exc import DatabaseError
 from werkzeug.utils import secure_filename
 
@@ -186,7 +187,7 @@ def parse_json_file(file):
 
 def format_timestamp(timestamp):
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
-    return datetime.fromtimestamp(timestamp / const.TIMESTAMP_DIVISOR).strftime(
+    return datetime.datetime.fromtimestamp(timestamp / const.TIMESTAMP_DIVISOR).strftime(
         const.DATE_FORMAT
     )
 
@@ -232,17 +233,33 @@ def check_all_tests_passed_run(files):
 
 
 def create_temporary_test_result():
-    """Создает временную запись в БД с тестовым записком."""
-    new_result = TestResult(
-        run_name=f"{const.DEFAULT_RUN_NAME}_{datetime.datetime.now()}",
-        start_date="",
-        end_date="",
-        status="",
-        file_link="",
-    )
-    db.session.add(new_result)
-    db.session.commit()  # Коммитим временную запись
-    return new_result
+    """Создает временную запись в БД с тестовым записком, создавая таблицу при необходимости."""
+    try:
+        # Создаем таблицу, если она еще не создана
+        inspector = inspect(db.engine)
+        if not inspector.has_table(TestResult.__tablename__):
+            db.create_all()
+
+        # Создаем новый тестовый результат
+        new_result = TestResult(
+            run_name=f"{const.DEFAULT_RUN_NAME}_{datetime.datetime.now()}",
+            start_date=None,
+            end_date=None,
+            status="pending",
+            file_link=None,
+        )
+
+        # Добавляем и коммитим новую запись
+        db.session.add(new_result)
+        db.session.commit()
+
+        return new_result
+
+    except DatabaseError as error_msg:
+        # Обработка ошибки базы данных
+        db.session.rollback()
+        logger.exception("Ошибка при создании записи в базе данных", exc_info=error_msg)
+        raise
 
 
 def update_test_result(new_result, test_run_info):

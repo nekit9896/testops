@@ -1,15 +1,19 @@
 services:
   db:
-    image: postgres:13
+    image: bitnami/postgresql:17.0.0
     environment:
       - POSTGRESQL_DATABASE=testops
       - POSTGRESQL_USERNAME=testops
       - ALLOW_EMPTY_PASSWORD=yes
     volumes:
-      - postgresql-data:/data
+      - postgresql-data:/var/lib/postgresql/data
+    networks:
+      - minio-network
+    ports:
+      - "5432:5432"
 
   flask-app:
-    image: nekit9896/testops-flask-app:v0.0.1
+    image: nekit9896/testops-flask-app:v0.0.3
     container_name: testops-flask-app
     ports:
       - "5000:5000"
@@ -21,6 +25,7 @@ services:
       - MINIO_ACCESS_KEY=minioadmin
       - MINIO_SECRET_KEY=minioadmin
       # Переменные PostgreSQL
+      - SQLALCHEMY_DATABASE_URI=postgresql://testops:@db:5432/testops
       - POSTGRESQL_HOST=db
       - POSTGRESQL_PORT=5432
       - POSTGRESQL_DATABASE=testops
@@ -28,8 +33,6 @@ services:
     depends_on:
       - minio
       - db
-    volumes:
-      - .:/app
     networks:
       - minio-network
 
@@ -38,8 +41,8 @@ services:
     container_name: minio
     command: server /data --console-address ":9006"
     ports:
-      - "9005:9005"  # Проброс порта 9000 для Web UI
-      - "9006:9006"  # Проброс порта 9001 для консоли MinIO (если используется)
+      - "9005:9005"  # Проброс порта для Web UI
+      - "9006:9006"  # Проброс порта для консоли MinIO (если используется)
     environment:
       - MINIO_ROOT_USER=minioadmin
       - MINIO_ROOT_PASSWORD=minioadmin

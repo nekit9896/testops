@@ -6,6 +6,6 @@ class Config:
     FLASK_ENV = "development"
     SECRET_KEY = ""
     SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL", "postgresql://username:password@localhost/dbname"
+        "DATABASE_URL", "postgresql://testops:@db:5432/testops"
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False

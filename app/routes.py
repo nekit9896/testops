@@ -172,6 +172,3 @@ def delete_test_run(run_id):
         error_msg = "TestRun не найден"
         logger.error(error_msg, run_id=run_id)
         abort(404, description=error_msg)
-
-    except Exception as error:
-        return jsonify({"error": str(error)}), 500
