@@ -28,4 +28,3 @@
 
     # Запускаем приложение
     CMD ["flask", "run"]
-#    CMD ["flask", "db", "upgrade", "&&", "flask", "run"]
