@@ -1,6 +1,5 @@
 from app import create_app, db
 from constants import HOST, PORT
-from app.models import TestResult
 
 app = create_app()
 with app.app_context():
