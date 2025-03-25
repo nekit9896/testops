@@ -42,10 +42,8 @@ def create_app():
     db.init_app(app)
     migrate.init_app(app, db)
 
-    # Импортируем модели после инициализации db
     # Регистрация маршрутов
     from .errors import errors_bp
-    from .models import TestResult
     from .routes import bp as routes_bp
 
     app.register_blueprint(routes_bp)
