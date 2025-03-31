@@ -1,3 +1,5 @@
+from sqlalchemy import func
+
 from . import db
 
 
@@ -11,6 +13,7 @@ class TestResult(db.Model):
     end_date = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(50), nullable=False)
     file_link = db.Column(db.String(255), nullable=True)
+    created_at = db.Column(db.DateTime, default=func.now(), nullable=False)
     is_deleted = db.Column(db.Boolean, default=False)
 
     def __repr__(self):

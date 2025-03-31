@@ -189,7 +189,7 @@ def format_timestamp(timestamp):
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
     return datetime.datetime.fromtimestamp(
         timestamp / const.TIMESTAMP_DIVISOR
-    ).strftime(const.DATE_FORMAT)
+    ).strftime(const.DB_DATE_FORMAT)
 
 
 def check_all_tests_passed_run(files):
@@ -346,3 +346,33 @@ def create_result_directory(run_name):
     """Создает директорию для сохранения файлов тестового запуска."""
     result_folder = os.path.join(const.UPLOAD_FOLDER, run_name)
     os.makedirs(result_folder, exist_ok=True)
+
+
+def fetch_reports():
+    """
+    Извлекает записи отчетов из базы данных и преобразует их в список словарей
+    """
+    test_results = TestResult.query.filter_by(is_deleted=False).order_by(TestResult.start_date.desc()).limit(20).all()
+    return [
+        {
+            "id": result.id,
+            "run_name": result.run_name,
+            "start_date": result.start_date.strftime(const.VIEW_DATE_FORMAT) if result.start_date else None,
+            "end_date": result.end_date.strftime(const.VIEW_DATE_FORMAT) if result.end_date else None,
+            "status": result.status,
+        }
+        for result in test_results
+    ]
+
+
+def log_reports(results):
+    """
+    Логирует информацию о состоянии списка отчетов
+    """
+    if results:
+        logger.info("Обработан запрос на страницу списка отчетов", status_code=200)
+    else:
+        logger.info(
+            "Обработан запрос на страницу списка отчетов, список отчетов пуст",
+            status_code=200,
+        )

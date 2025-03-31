@@ -46,4 +46,5 @@ STOP_RUN_KEY = "stop"
 TIMESTAMP_DIVISOR = 1000
 
 # Other
-DATE_FORMAT = "%Y%m%d_%H%M%S"
+DB_DATE_FORMAT = "%Y%m%d_%H%M%S"
+VIEW_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"

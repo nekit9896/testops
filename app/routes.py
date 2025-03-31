@@ -105,32 +105,9 @@ def get_reports():
     """
     Возвращает страницу со списком отчетов
     """
-    # Получает имена директорий с отчетами
-    result_names = helpers.create_reports_list()
-    reports = []
-    # Для каждого прогона заполняем словарь
-    if result_names:
-        for name in result_names:
-            # Здесь потребуется подключение к базе и данные о прогоне будем подтягивать из базы
-            reports.append(
-                {
-                    "id": 0,
-                    "name": name,
-                    "date": datetime.now().isoformat(),
-                    "status": "success",
-                }
-            )
-        response = render_template(const.TEMPLATE_REPORTS, reports=reports)
-        logger.info("Обработан запрос на страницу списка отчетов", status_code=200)
-        return response
-    # Если отсутствуют результаты прогонов, то будет выведен пустой список отчетов
-    if not result_names:
-        response = render_template(const.TEMPLATE_REPORTS, reports=[])
-        logger.info(
-            "Обработан запрос на страницу списка отчетов, список отчетов пуст",
-            status_code=200,
-        )
-    return response
+    results = helpers.fetch_reports()
+    helpers.log_reports(results)
+    return render_template(const.TEMPLATE_REPORTS, results=results)
 
 
 @bp.route("/reports/<int:result_id>", methods=["GET"])
