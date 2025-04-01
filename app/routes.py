@@ -113,19 +113,30 @@ def get_reports():
 @bp.route("/reports/<int:result_id>", methods=["GET"])
 def view_report(result_id: int):
     """
-    Открывает отчет
+    Открывает отчет из MinIO или генерирует новый
     """
-    # Получает название директории с отчетом по id
-    result_dir_name = str(result_id)
-    # Получает директорию, в которой находится html отчет
-    report_dir = helpers.get_report(result_dir_name)
+    try:
+        # Получаем метаданные прогона
+        test_result = TestResult.query.get_or_404(result_id)
 
-    response = send_from_directory(report_dir, const.ALLURE_REPORT_NAME)
-    logger.info(
-        "Обработан запрос на страницу с отчетом", status_code=200, result_id=result_id
-    )
-    return response
+        # Формируем путь к отчету в MinIO
+        report_path = f"{result_id}/{const.ALLURE_REPORT_NAME}"
 
+        # Проверяем наличие отчета в MinIO
+        if minio_client.object_exists(const.ALLURE_REPORTS_BUCKET_NAME, report_path):
+            # Генерируем временную presigned URL
+            report_url = minio_client.get_presigned_url(
+                const.ALLURE_REPORTS_BUCKET_NAME,
+                report_path,
+                expires=timedelta(hours=1)
+            return redirect(report_url)
+
+        # Если отчета нет - генерируем новый
+        return generate_and_upload_report(result_id, test_result.run_name)
+
+    except Exception as e:
+        logger.error("Ошибка при получении отчета", error=str(e))
+        abort(500)
 
 @bp.route("/delete_test_run/<int:run_id>", methods=["DELETE"])
 def delete_test_run(run_id):

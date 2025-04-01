@@ -344,7 +344,7 @@ def update_test_result(new_result, test_run_info):
 
 def create_result_directory(run_name):
     """Создает директорию для сохранения файлов тестового запуска."""
-    result_folder = os.path.join(const.UPLOAD_FOLDER, run_name)
+    result_folder = os.path.join(const.ALLURE_RESULT_FOLDER_NAME, run_name)
     os.makedirs(result_folder, exist_ok=True)
 
 
@@ -352,7 +352,7 @@ def fetch_reports():
     """
     Извлекает записи отчетов из базы данных и преобразует их в список словарей
     """
-    test_results = TestResult.query.filter_by(is_deleted=False).order_by(TestResult.start_date.desc()).limit(20).all()
+    test_results = TestResult.query.filter_by(is_deleted=False).order_by(TestResult.created_at.desc()).limit(20).all()
     return [
         {
             "id": result.id,
@@ -376,3 +376,10 @@ def log_reports(results):
             "Обработан запрос на страницу списка отчетов, список отчетов пуст",
             status_code=200,
         )
+
+
+def get_link_from_db(result_id):
+    test_result = TestResult.query.filter_by(id=result_id).first()
+    if not test_result:
+        raise ValueError(f"Тест с ID {result_id} не найден в базе данных.")
+    return test_result.link
