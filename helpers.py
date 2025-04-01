@@ -1,8 +1,12 @@
 import datetime
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 
+from flask import abort
+from minio import S3Error
 from sqlalchemy import inspect
 from sqlalchemy.exc import DatabaseError
 from werkzeug.utils import secure_filename
@@ -27,71 +31,15 @@ def allowed_file(filename):
     )
 
 
-def valid_files(files):
-    """Проверка на наличие и валидность файлов"""
-    return files and not all(f.filename == "" for f in files)
-
-
-def save_files(run_name, files):
-    """Сохраняет файлы в базе данных."""
-    logger.info("Сохранение файлов отчета в БД", run_name=run_name)
-    try:
-        for file in files:
-            if file and allowed_file(file.filename):
-                filename = secure_filename(file.filename)
-                file_content = file.read()
-
-                test_run = TestResult(
-                    run_name=run_name, file_name=filename, file_content=file_content
-                )
-                db.session.add(test_run)
-
-        db.session.commit()
-
-    except (DatabaseError, OSError):
-        logger.exception("Ошибка при сохранении файлов отчета в БД", run_name=run_name)
-
-
-def get_project_subdir_path(folder_name: str) -> str:
+def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
     """
-    Получает путь к папке в корне проекта
-    """
-    return os.path.join(os.getcwd(), folder_name)
+    Генерирует Allure-отчёт на основе результатов тестов.
+    На основе предоставленной директории с результатами тестов, функция выполняет
+    системную команду для генерации HTML-отчёта в указанной директории. В случае
+    ошибки генерации, логируется сообщение об ошибке и выбрасывается исключение.
 
-
-def check_report_exist(report_dir: str) -> bool:
-    """
-    Проверяет наличие отчета.
-    """
-    report_path = os.path.join(report_dir, const.ALLURE_REPORT_NAME)
-    return os.path.isfile(report_path)
-
-
-def get_folder_names(directory: str) -> list[str]:
-    """
-    Возвращает список названий папок в указанной директории.
-    """
-    return [
-        name
-        for name in os.listdir(directory)
-        if os.path.isdir(os.path.join(directory, name))
-    ]
-
-
-def create_reports_list():
-    """
-    Функция получения списка отчетов
-    """
-    # Получает путь к директории с отчетами
-    results_folder_path = get_project_subdir_path(const.ALLURE_RESULT_FOLDER_NAME)
-    # Получает имена директорий с отчетами
-    result_names = get_folder_names(results_folder_path)
-    return result_names
-
-
-def generate_report(result_dir_path: str, report_dir_path: str) -> None:
-    """
-    Создает html версию отчета командой в консоли.
+    result_dir_path - путь к директории, содержащей результаты тестов allure-results.
+    report_dir_path - путь к директории, куда будет сохранен HTML-отчёт Allure
     """
     command = [
         "allure",
@@ -103,14 +51,12 @@ def generate_report(result_dir_path: str, report_dir_path: str) -> None:
         "--single-file",
     ]
     try:
-        logger.info("Создание html версии отчета")
         subprocess.run(command, shell=True, text=True, check=True)
-
     except subprocess.CalledProcessError as error:
         error_msg = (
-            error.stderr.strip()
-            if error.stderr
-            else "Нет вывода ошибки выполнения команды"
+            "Нет вывода ошибки выполнения команды"
+            if not error.stderr
+            else error.stderr.strip()
         )
         logger.exception(
             "Ошибка при генерации Allure-отчета",
@@ -118,34 +64,6 @@ def generate_report(result_dir_path: str, report_dir_path: str) -> None:
             error_code=error.returncode,
         )
         raise RuntimeError
-
-
-def get_report(result_dir_name: str) -> str:
-    """
-    Получает директорию, в которой находится html отчет
-    """
-    # Получает путь к папке с результатами прогонов
-    results_dir_path = get_project_subdir_path(const.ALLURE_RESULT_FOLDER_NAME)
-    # Получает путь к папке с отчетами
-    reports_dir_path = get_project_subdir_path(const.ALLURE_REPORT_FOLDER_NAME)
-    # Получает путь к папке с результатами конкретного прогона
-    result_dir_path = os.path.join(results_dir_path, result_dir_name)
-    # Получает путь к папке с html отчетом
-    report_dir_path = os.path.join(reports_dir_path, result_dir_name)
-
-    # Проверяет наличие отчета
-    if check_report_exist(report_dir_path):
-        return report_dir_path
-    else:
-        # Создает html версию отчета командой в консоли
-        generate_report(result_dir_path, report_dir_path)
-
-        if check_report_exist(report_dir_path):
-            return report_dir_path
-        else:
-            error_msg = "Ошибка при получении html файла с отчетом"
-            logger.error(error_msg, run_name=result_dir_path)
-            raise FileNotFoundError(error_msg)
 
 
 def process_and_upload_file(run_name, file):
@@ -342,23 +260,62 @@ def update_test_result(new_result, test_run_info):
     db.session.commit()
 
 
-def create_result_directory(run_name):
-    """Создает директорию для сохранения файлов тестового запуска."""
-    result_folder = os.path.join(const.ALLURE_RESULT_FOLDER_NAME, run_name)
-    os.makedirs(result_folder, exist_ok=True)
+def check_files_size(files, max_size=None):
+    """
+    Проверка размера загружаемых файлов.
+    files - список файлов для проверки.
+    max_size - максимальный допустимый размер в байтах.
+    """
+    # Получение размера по умолчанию из переменной или установки стандартного 50 МБ
+    if max_size is None:
+        max_size = const.MAX_FILE_SIZE  # 50 MB по умолчанию
+
+    # Считаем общий размер файлов
+    total_size = 0
+    for file in files:
+        file.seek(0, 2)  # Переместить курсор в конец файла
+        total_size += file.tell()  # Получить текущую позицию (размер в байтах)
+        file.seek(0)  # Сбросить курсор на начало
+
+    # Проверка превышения лимита
+    if total_size > max_size:
+        logger.error(
+            "Общий размер загружаемых файлов превышен",
+            total_size=total_size,
+            max_size=max_size,
+        )
+        abort(400, description="Общий размер загружаемых файлов превышает допустимый")
+
+    logger.info(
+        "Размер файлов в пределах допустимого", total_size=total_size, max_size=max_size
+    )
+    return True
 
 
 def fetch_reports():
     """
     Извлекает записи отчетов из базы данных и преобразует их в список словарей
     """
-    test_results = TestResult.query.filter_by(is_deleted=False).order_by(TestResult.created_at.desc()).limit(20).all()
+    test_results = (
+        TestResult.query.filter_by(is_deleted=False)
+        .order_by(TestResult.created_at.desc())
+        .limit(20)
+        .all()
+    )
     return [
         {
             "id": result.id,
             "run_name": result.run_name,
-            "start_date": result.start_date.strftime(const.VIEW_DATE_FORMAT) if result.start_date else None,
-            "end_date": result.end_date.strftime(const.VIEW_DATE_FORMAT) if result.end_date else None,
+            "start_date": (
+                result.start_date.strftime(const.VIEW_DATE_FORMAT)
+                if result.start_date
+                else None
+            ),
+            "end_date": (
+                result.end_date.strftime(const.VIEW_DATE_FORMAT)
+                if result.end_date
+                else None
+            ),
             "status": result.status,
         }
         for result in test_results
@@ -378,8 +335,111 @@ def log_reports(results):
         )
 
 
-def get_link_from_db(result_id):
-    test_result = TestResult.query.filter_by(id=result_id).first()
-    if not test_result:
-        raise ValueError(f"Тест с ID {result_id} не найден в базе данных.")
-    return test_result.link
+def generate_and_upload_report(run_name: str):
+    """
+    Генерирует и загружает allure-report в MinIO.
+    Аргумент run_name - название тест-рана, используемое для директории allure-result и allure-report.
+    """
+    temp_dir = tempfile.mkdtemp()  # Создаем временную директорию для результатов
+    report_dir = tempfile.mkdtemp()  # Создаем временную директорию для отчёта
+
+    try:
+        # Загружаем результаты из MinIO
+        download_allure_results(run_name, temp_dir)
+
+        # Генерируем Allure-отчёт
+        generate_allure_report(temp_dir, report_dir)
+
+        # Загружаем отчёт в MinIO
+        upload_report_to_minio(run_name, report_dir)
+
+    finally:
+        # Очистка временных директорий
+        cleanup_temporary_directories([temp_dir, report_dir])
+
+
+def download_allure_results(allure_results_directory: str, destination_dir: str):
+    """
+    Загружает результаты Allure из MinIO в указанную директорию.
+    Аргументы:
+    allure_results_directory - директория в MinIO с allure-results.
+    destination_dir - путь к локальной директории для сохранения allure-results.
+    """
+    for obj in minio_client.list_objects(
+        const.ALLURE_RESULTS_BUCKET_NAME, prefix=f"{allure_results_directory}/"
+    ):
+        file_path = os.path.join(destination_dir, obj.object_name.split("/")[-1])
+        minio_client.download_file(
+            const.ALLURE_RESULTS_BUCKET_NAME, obj.object_name, file_path
+        )
+
+
+def upload_report_to_minio(run_name: str, report_dir: str):
+    """
+    Загружает HTML-отчёт Allure в MinIO.
+    run_name - ммя тест-запуска для файла allure-report.
+    report_dir - путь к временной директории, где находится HTML-отчёт.
+    """
+    final_report_file = os.path.join(report_dir, "index.html")
+    with open(final_report_file, "rb") as file:
+        minio_client.put_object(
+            const.ALLURE_REPORTS_BUCKET_NAME,
+            f"{run_name}.html",
+            file,
+            os.path.getsize(final_report_file),
+        )
+
+
+def cleanup_temporary_directories(directories: list):
+    """
+    Удаляет указанные временные директории.
+    """
+    for directory in directories:
+        if os.path.exists(directory):
+            shutil.rmtree(directory)
+
+
+def report_exists(run_name: str):
+    """
+    Проверяет наличие отчёта Allure в хранилище MinIO.
+
+    Данный метод используется для проверки существования HTML-отчета
+    о тестировании с определённым именем в указанном бакете MinIO.
+    Если отчёт существует, метод возвращает `True`, в противном
+    случае – `False`.
+    """
+    try:
+        minio_client.minio_client.stat_object(
+            const.ALLURE_REPORTS_BUCKET_NAME, f"{run_name}.html"
+        )
+        return True
+    except S3Error:
+        return False
+
+
+def log_and_abort(result_id: int, testrun):
+    """
+    Логирование и окончание запроса, если тестран не существует или помечен как удаленный.
+    """
+    if not testrun:
+        logger.error(f"Test run с ID {result_id} не найден.")
+        abort(404, description=f"Test run с ID {result_id} не найден.")
+
+    if testrun.is_deleted:
+        logger.warning(f"Test run {result_id} помечен как удаленный.")
+        abort(404, description=f"Test run {testrun.run_name} помечен как удаленный.")
+
+
+def get_or_generate_report(run_name: str):
+    """
+    Получение или генерация allure-report
+    Загрузка allure-report в MinIO
+    """
+    if report_exists(run_name):
+        return minio_client.minio_client.get_object(
+            const.ALLURE_REPORTS_BUCKET_NAME, f"{run_name}.html"
+        )
+    generate_and_upload_report(run_name)
+    return minio_client.minio_client.get_object(
+        const.ALLURE_REPORTS_BUCKET_NAME, f"{run_name}.html"
+    )

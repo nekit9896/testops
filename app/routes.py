@@ -1,7 +1,4 @@
-from datetime import datetime
-
-from flask import (Blueprint, abort, jsonify, render_template, request,
-                   send_from_directory)
+from flask import Blueprint, Response, abort, jsonify, render_template, request
 from sqlalchemy.exc import DatabaseError
 
 import constants as const
@@ -47,6 +44,9 @@ def upload_results():
             logger.error("Необходимо загрузить хотя бы один файл")
             abort(400, description="Необходимо загрузить хотя бы один файл")
 
+        # Проверка размера файлов
+        helpers.check_files_size(files)
+
         # Шаг 2. Создаем временную запись о запуске автотестов в БД
         new_result = helpers.create_temporary_test_result()
         logger.info("Создана новая временная запись о запуске автотестов")
@@ -58,42 +58,53 @@ def upload_results():
         abort(500, description=error_msg)
 
     # Шаг 3. Анализируем файлы и извлекаем параметры запуска автотестов
-    test_run_info = helpers.check_all_tests_passed_run(files)
-
     try:
-        # Шаг 4. Формируем уникальное имя для запуска автотестов и обновляем данные в БД
+        test_run_info = helpers.check_all_tests_passed_run(files)
+        if not test_run_info:
+            logger.error("Не удалось извлечь параметры тестрана")
+            abort(400, description="Ошибка анализа файлов")
+    except Exception as error_msg:
+        logger.exception("Неизвестная ошибка при анализе тестрана")
+        abort(500, description=error_msg)
+
+    # Шаг 4. Формируем уникальное имя для запуска автотестов и обновляем данные в БД
+    try:
         helpers.update_test_result(new_result, test_run_info)
-        logger.info("Создана новая постоянная запись о запуске автотестов")
+        logger.info(f"Обновлены данные тестрана с ID: {new_result.id}")
     except DatabaseError as error_msg:
         # Откат транзакций в случае исключения
         db.session.rollback()
-        logger.exception("Ошибка при сохранении статуса тест рана в базу данных")
+        logger.exception("Ошибка при сохранении статуса тестрана в базу данных")
         abort(500, description=error_msg)
 
-    try:
-        # Шаг 5. Создаем папку для сохранения файлов на сервере
-        helpers.create_result_directory(new_result.run_name)
-        logger.info("Создана директория для сохранения результатов")
-    except Exception as error_msg:
-        logger.exception("Ошибка при создании директории для результатов")
-        abort(500, description=error_msg)
+    # Шаг 5. Обрабатываем файлы и обновляем ссылку на них в БД
+    successful_files = []
+    error_files = []
+    for file in files:
+        if not file or not helpers.allowed_file(file.filename):
+            logger.error(f"Недопустимый файл: {file.filename}")
+            error_files.append(file.filename)
+            continue  # Пропуск недопустимого файла и продолжение обработки
 
-    try:
-        # Шаг 6. Обрабатываем файлы и обновляем ссылку на них в БД
-        for file in files:
-            if file and helpers.allowed_file(file.filename):
-                helpers.process_and_upload_file(new_result.run_name, file)
+        try:
+            helpers.process_and_upload_file(new_result.run_name, file)
+            successful_files.append(file.filename)
+            logger.info(f"Файл {file.filename} успешно загружен")
+        except (helpers.DatabaseError, OSError) as file_error:
+            logger.exception(f"Ошибка обработки файла {file.filename}: {file_error}")
+            db.session.rollback()
+            error_files.append(file.filename)
 
-        file_link = f"{minio_client.minio_endpoint}/{const.ALLURE_RESULTS_BUCKET_NAME}/{new_result.run_name}"
-        # Обновляем file_link в PostgreSQL
-        new_result.file_link = file_link
-        db.session.commit()
-    except (DatabaseError, OSError) as error_msg:
-        error_msg = (
-            "Ошибка при обработке файлов или обновлении ссылки на файл в базе данных"
-        )
-        logger.exception(error_msg)
-        abort(500, description=error_msg)
+    # Лог итогового статуса обработки файлов
+    if successful_files:
+        logger.info(f"Успешно обработано: {', '.join(successful_files)}")
+    if error_files:
+        logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
+
+    # Проверка на уникальные ошибки в обработке
+    if error_files:
+        abort(500, description="Некоторые файлы не были успешно обработаны")
+
     response = jsonify({"run_id": new_result.id, "message": "Файлы успешно загружены"})
     response_code = 201
     logger.info("Файлы успешно загружены", status_code=response_code)
@@ -113,30 +124,38 @@ def get_reports():
 @bp.route("/reports/<int:result_id>", methods=["GET"])
 def view_report(result_id: int):
     """
-    Открывает отчет из MinIO или генерирует новый
+    Представление allure-report для определенного тестрана
+    Данный метод выполняет следующие операции:
+    1. Извлекает объект TestResult из базы данных с использованием переданного result_id.
+    2. Проверяет, существует ли запись и не помечена ли она как удаленная.
+       - если запись отсутствует или отмечена как удаленная, вызывается вспомогательная функция log_and_abort,
+       которая регистрирует ошибку и завершает запрос.
+    3. Извлекает имя тестрана (run_name) из объекта testrun.
+    4. Обеспечивает наличие бакета в MinIO для хранения отчетов allure-reports.
+    5. Использует функцию get_or_generate_report, чтобы либо получить существующий allure-report,
+    либо сгенерировать и загрузить новый отчет, если он отсутствует.
+    6. Читает содержимое HTML-файла отчета и декодирует его в строку (REST API).
+    7. Возвращает содержание allure-report в виде ответа с MIME-типом text/html.
     """
-    try:
-        # Получаем метаданные прогона
-        test_result = TestResult.query.get_or_404(result_id)
+    # Получение TestResult из базы данных
+    testrun = TestResult.query.get(result_id)
 
-        # Формируем путь к отчету в MinIO
-        report_path = f"{result_id}/{const.ALLURE_REPORT_NAME}"
+    # Проверка на существование и статус TestResult
+    if not testrun or testrun.is_deleted:
+        helpers.log_and_abort(result_id, testrun)
 
-        # Проверяем наличие отчета в MinIO
-        if minio_client.object_exists(const.ALLURE_REPORTS_BUCKET_NAME, report_path):
-            # Генерируем временную presigned URL
-            report_url = minio_client.get_presigned_url(
-                const.ALLURE_REPORTS_BUCKET_NAME,
-                report_path,
-                expires=timedelta(hours=1)
-            return redirect(report_url)
+    run_name = testrun.run_name
 
-        # Если отчета нет - генерируем новый
-        return generate_and_upload_report(result_id, test_result.run_name)
+    # Проверка существования бакета
+    minio_client.ensure_bucket_exists(const.ALLURE_REPORTS_BUCKET_NAME)
 
-    except Exception as e:
-        logger.error("Ошибка при получении отчета", error=str(e))
-        abort(500)
+    # Получение или генерация allure-report
+    html_file = helpers.get_or_generate_report(run_name)
+
+    # Возвращает HTML как ответ
+    html_content = html_file.read().decode("utf-8")
+    return Response(html_content, mimetype="text/html")
+
 
 @bp.route("/delete_test_run/<int:run_id>", methods=["DELETE"])
 def delete_test_run(run_id):

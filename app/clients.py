@@ -40,3 +40,16 @@ class MinioClient:
         self.minio_client.put_object(
             bucket_name, file_path, file_stream, length=content_length
         )
+
+    def list_objects(self, bucket_name, prefix):
+        """Возвращает объекты, подходящие под префикс."""
+        return self.minio_client.list_objects(
+            bucket_name, prefix=prefix, recursive=True
+        )
+
+    def download_file(self, bucket_name, object_name, file_path):
+        """Скачивает объект в указанный локальный путь."""
+        response = self.minio_client.get_object(bucket_name, object_name)
+        with open(file_path, "wb") as file_data:
+            for data in response.stream(32 * 1024):
+                file_data.write(data)

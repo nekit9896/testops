@@ -4,9 +4,7 @@ HOST = "0.0.0.0"
 
 # Folders
 ALLURE_REPORT_FOLDER_NAME = "allure-reports"  # Отсюда читаются готовые отчеты
-ALLURE_RESULT_FOLDER_NAME = (
-    "allure-results"
-)
+ALLURE_RESULT_FOLDER_NAME = "allure-results"
 
 # Files
 ALLOWED_EXTENSIONS = {"html", "json", "txt"}
@@ -47,3 +45,4 @@ TIMESTAMP_DIVISOR = 1000
 # Other
 DB_DATE_FORMAT = "%Y%m%d_%H%M%S"
 VIEW_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+MAX_FILE_SIZE = 52428800  # 50 Mb в байтах
