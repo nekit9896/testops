@@ -36,13 +36,6 @@ def process_and_upload_file(run_name, file):
         filename = file.filename
         file_path = f"{run_name}/{filename}"
 
-        # # Считываем содержимое как байты
-        # file_content = file.read()
-        # content_length = len(file_content)  # Длина содержимого
-        #
-        # # Логирование содержимого для проверки
-        # logger.info(f"Содержимое файла {filename}: {file_content[:100]}")  # Первые 100 байт для дебага
-
         # Убедимся, что файл доступен, и логируем его имя
         if not file or not filename:
             logger.error("Файл отсутствует или поврежден.")
