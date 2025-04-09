@@ -32,7 +32,7 @@ class MinioClient:
                 self.minio_client.make_bucket(bucket_name)
                 logger.info("Бакет успешно создан.", bucket_name=bucket_name)
             else:
-                logger.warning("Бакет уже существует.", bucket_name=bucket_name)
+                pass
         except S3Error:
             logger.exception("Ошибка при создании бакета")
 

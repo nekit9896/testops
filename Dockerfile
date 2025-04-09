@@ -1,30 +1,23 @@
-    # Используем базовый образ Python
-    FROM python:3.10-slim
+# Используем базовый образ с библиотеками
+FROM nekit9896/testops-dependencies:v0.1
 
-    # Установка рабочего каталога
-    WORKDIR /app
+# Установка рабочего каталога
+WORKDIR /app
 
-    # Копируем файлы проекта
-    COPY . .
+# Копируем файлы проекта
+COPY . .
 
-    # Устанавливаем Poetry
-    RUN pip install --upgrade pip && \
-        pip install poetry
+# Устанавливаем зависимости через Poetry
+RUN poetry install --no-root
 
-    # Делаем так, чтобы Poetry не использовал виртуальные окружения
-    RUN poetry config virtualenvs.create false
+# Устанавливаем переменные окружения
+ENV FLASK_APP=run.py
+ENV FLASK_RUN_HOST=0.0.0.0
+ENV FLASK_RUN_PORT=5000
 
-    # Устанавливаем зависимости через Poetry
-    RUN poetry install --no-root
+# Указываем порт бд
+EXPOSE 9003
+EXPOSE 5000
 
-    # Устанавливаем переменные окружения
-    ENV FLASK_APP=run.py
-    ENV FLASK_RUN_HOST=0.0.0.0
-    ENV FLASK_RUN_PORT=5000
-
-    # Указываем порт бд
-    EXPOSE 9003
-    EXPOSE 5000
-
-    # Запускаем приложение
-    CMD ["flask", "run"]
+# Запускаем приложение
+CMD ["flask", "run"]

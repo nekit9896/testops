@@ -1,4 +1,5 @@
 import datetime
+import io
 import json
 import os
 import shutil
@@ -9,7 +10,6 @@ from flask import abort
 from minio import S3Error
 from sqlalchemy import inspect
 from sqlalchemy.exc import DatabaseError
-from werkzeug.utils import secure_filename
 
 import constants as const
 from app import db
@@ -31,51 +31,38 @@ def allowed_file(filename):
     )
 
 
-def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
-    """
-    Генерирует Allure-отчёт на основе результатов тестов.
-    На основе предоставленной директории с результатами тестов, функция выполняет
-    системную команду для генерации HTML-отчёта в указанной директории. В случае
-    ошибки генерации, логируется сообщение об ошибке и выбрасывается исключение.
-
-    result_dir_path - путь к директории, содержащей результаты тестов allure-results.
-    report_dir_path - путь к директории, куда будет сохранен HTML-отчёт Allure
-    """
-    command = [
-        "allure",
-        "generate",
-        result_dir_path,
-        "-o",
-        report_dir_path,
-        "--clean",
-        "--single-file",
-    ]
-    try:
-        subprocess.run(command, shell=True, text=True, check=True)
-    except subprocess.CalledProcessError as error:
-        error_msg = (
-            "Нет вывода ошибки выполнения команды"
-            if not error.stderr
-            else error.stderr.strip()
-        )
-        logger.exception(
-            "Ошибка при генерации Allure-отчета",
-            description=error_msg,
-            error_code=error.returncode,
-        )
-        raise RuntimeError
-
-
 def process_and_upload_file(run_name, file):
-    logger.info("Загрузка файлов в Minio", run_name=run_name)
     try:
-        filename = secure_filename(file.filename)
+        filename = file.filename
         file_path = f"{run_name}/{filename}"
 
-        # Считываем поток файла без сохранения на диск
-        file_stream = file.stream
-        content_length = len(file.read())
-        file.stream.seek(0)  # Сбрасываем указатель после подсчета длины
+        # # Считываем содержимое как байты
+        # file_content = file.read()
+        # content_length = len(file_content)  # Длина содержимого
+        #
+        # # Логирование содержимого для проверки
+        # logger.info(f"Содержимое файла {filename}: {file_content[:100]}")  # Первые 100 байт для дебага
+
+        # Убедимся, что файл доступен, и логируем его имя
+        if not file or not filename:
+            logger.error("Файл отсутствует или поврежден.")
+            return
+
+        # Подтверждаем тип содержимого
+        logger.info(f"Тип файла: {type(file)}, имя файла: {filename}")
+
+        # Считываем файл
+        file.seek(0)
+        file_content = file.read()
+        if not file_content:
+            logger.error(f"Файл {filename} пустой! и не будет загружен.")
+            return
+
+        content_length = len(file_content)
+        logger.info(f"Размер файла {filename}: {content_length} байт")
+
+        # Оборачиваем файл в BytesIO для повторной передачи
+        file_stream = io.BytesIO(file_content)
 
         # Убеждаемся, что бакет существует
         minio_client.ensure_bucket_exists(const.ALLURE_RESULTS_BUCKET_NAME)
@@ -87,6 +74,8 @@ def process_and_upload_file(run_name, file):
             file_stream=file_stream,
             content_length=content_length,
         )
+
+        return filename
 
     except OSError:
         logger.exception("Ошибка обработки файла", filename=file.filename)
@@ -233,7 +222,6 @@ def create_temporary_test_result():
             start_date=None,
             end_date=None,
             status=const.PENDING_STATUS,
-            file_link=None,
         )
 
         # Добавляем и коммитим новую запись
@@ -344,17 +332,17 @@ def generate_and_upload_report(run_name: str):
     report_dir = tempfile.mkdtemp()  # Создаем временную директорию для отчёта
 
     try:
-        # Загружаем результаты из MinIO
+        logger.info("Начало скачивания файлов из MinIO")
         download_allure_results(run_name, temp_dir)
 
-        # Генерируем Allure-отчёт
+        logger.info("Начало генерации allure-report")
         generate_allure_report(temp_dir, report_dir)
 
-        # Загружаем отчёт в MinIO
+        logger.info("Загрузка allure-report в MinIO")
         upload_report_to_minio(run_name, report_dir)
 
     finally:
-        # Очистка временных директорий
+        logger.info("Очистка временных директорий")
         cleanup_temporary_directories([temp_dir, report_dir])
 
 
@@ -372,6 +360,42 @@ def download_allure_results(allure_results_directory: str, destination_dir: str)
         minio_client.download_file(
             const.ALLURE_RESULTS_BUCKET_NAME, obj.object_name, file_path
         )
+        if os.path.exists(file_path):
+            print(
+                f"Файл {file_path} загружен, размер: {os.path.getsize(file_path)} байт"
+            )
+        else:
+            print(f"Ошибка: Файл {file_path} не загружен")
+
+
+def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
+    """
+    Генерирует Allure-отчёт на основе результатов тестов.
+    На основе предоставленной директории с результатами тестов, функция выполняет
+    системную команду для генерации HTML-отчёта в указанной директории. В случае
+    ошибки генерации, логируется сообщение об ошибке и выбрасывается исключение.
+
+    result_dir_path - путь к директории, содержащей результаты тестов allure-results.
+    report_dir_path - путь к директории, куда будет сохранен HTML-отчёт Allure
+    """
+    command = (
+        f"allure generate {result_dir_path} "
+        f"-o {report_dir_path} --clean --single-file"
+    )
+    try:
+        subprocess.run(command, shell=True, text=True, check=True)
+    except subprocess.CalledProcessError as error:
+        error_msg = (
+            "Нет вывода ошибки выполнения команды"
+            if not error.stderr
+            else error.stderr.strip()
+        )
+        logger.exception(
+            "Ошибка при генерации Allure-отчета",
+            description=error_msg,
+            error_code=error.returncode,
+        )
+        raise RuntimeError("Не удалось сгенерировать Allure-отчёт") from error
 
 
 def upload_report_to_minio(run_name: str, report_dir: str):
@@ -397,6 +421,7 @@ def cleanup_temporary_directories(directories: list):
     for directory in directories:
         if os.path.exists(directory):
             shutil.rmtree(directory)
+            logger.info(f"Временная директория {directory} удалена")
 
 
 def report_exists(run_name: str):

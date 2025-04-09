@@ -78,8 +78,9 @@ def upload_results():
         abort(500, description=error_msg)
 
     # Шаг 5. Обрабатываем файлы и обновляем ссылку на них в БД
-    successful_files = []
+    success_files = []
     error_files = []
+    logger.info("Загрузка файлов в Minio", run_name=new_result.run_name)
     for file in files:
         if not file or not helpers.allowed_file(file.filename):
             logger.error(f"Недопустимый файл: {file.filename}")
@@ -87,22 +88,21 @@ def upload_results():
             continue  # Пропуск недопустимого файла и продолжение обработки
 
         try:
-            helpers.process_and_upload_file(new_result.run_name, file)
-            successful_files.append(file.filename)
-            logger.info(f"Файл {file.filename} успешно загружен")
+            successful_filename = helpers.process_and_upload_file(
+                new_result.run_name, file
+            )
+            if successful_filename:
+                success_files.append(successful_filename)
         except (helpers.DatabaseError, OSError) as file_error:
             logger.exception(f"Ошибка обработки файла {file.filename}: {file_error}")
             db.session.rollback()
             error_files.append(file.filename)
 
     # Лог итогового статуса обработки файлов
-    if successful_files:
-        logger.info(f"Успешно обработано: {', '.join(successful_files)}")
+    if success_files:
+        logger.info(f"Успешно загруженные файлы в MinIO: {', '.join(success_files)}")
     if error_files:
         logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
-
-    # Проверка на уникальные ошибки в обработке
-    if error_files:
         abort(500, description="Некоторые файлы не были успешно обработаны")
 
     response = jsonify({"run_id": new_result.id, "message": "Файлы успешно загружены"})
