@@ -13,21 +13,23 @@
             <tr class="border-b">
                 <th class="text-left p-2">Id</th>
                 <th class="text-left p-2">Название</th>
+                <th class="text-left p-2">Время запуска</th>
+                <th class="text-left p-2">Время завершения</th>
                 <th class="text-left p-2">Статус</th>
-                <th class="text-left p-2">Время</th>
                 <th class="text-left p-2">Действие</th>
             </tr>
         </thead>
         <tbody>
             <!-- Для каждого отчёта из списка создаётся новая строка в таблице -->
-            {% for report in reports %}
+            {% for result in results %}
             <tr>
-                <td class="p-2">{{ report.id }}</td>
-                <td class="p-2">{{ report.name }}</td>
-                <td class="p-2">{{ report.status }}</td>
-                <td class="p-2">{{ report.date }}</td>
+                <td class="p-2">{{ result.id }}</td>
+                <td class="p-2">{{ result.run_name }}</td>
+                <td class="p-2">{{ result.start_date }}</td>
+                <td class="p-2">{{ result.end_date }}</td>
+                <td class="p-2">{{ result.status }}</td>
                 <td class="p-2">
-                    <a href="/reports/{{ report.name }}" class="text-blue-500 underline" target="_blank">Открыть</a>
+                    <a href="/reports/{{ result.id }}" class="text-blue-500 underline" target="_blank">Открыть</a>
                 </td>
             </tr>
             {% endfor %}

@@ -3,11 +3,8 @@ PORT = 5000
 HOST = "0.0.0.0"
 
 # Folders
-UPLOAD_FOLDER = "allure-results"
-ALLURE_REPORT_FOLDER_NAME = "reports"  # Отсюда читаются готовые отчеты
-ALLURE_RESULT_FOLDER_NAME = (
-    "allure-results"  # Здесь в отдельных директориях будут находиться данные о прогоне
-)
+ALLURE_REPORT_FOLDER_NAME = "allure-reports"  # Отсюда читаются готовые отчеты
+ALLURE_RESULT_FOLDER_NAME = "allure-results"
 
 # Files
 ALLOWED_EXTENSIONS = {"html", "json", "txt"}
@@ -16,7 +13,7 @@ LOG_FILE_NAME = "logs.json"
 
 # MinIO
 ALLURE_RESULTS_BUCKET_NAME = "allure-results-bucket"
-TEMP_RUN_ID = 5557  # Тестовый айди прогона для запуска без PostgreSQL
+ALLURE_REPORTS_BUCKET_NAME = "allure-reports-bucket"
 
 # Front
 TEMPLATE_INDEX = "index.html"
@@ -46,4 +43,6 @@ STOP_RUN_KEY = "stop"
 TIMESTAMP_DIVISOR = 1000
 
 # Other
-DATE_FORMAT = "%Y%m%d_%H%M%S"
+DB_DATE_FORMAT = "%Y%m%d_%H%M%S"
+VIEW_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
+MAX_FILE_SIZE = 52428800  # 50 Mb в байтах
