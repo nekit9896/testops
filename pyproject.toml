@@ -20,6 +20,8 @@ black = "25.1.0"
 grep = "0.3.2"
 pythonping = "1.1.4"
 structlog = "25.2.0"
+requests = "2.32.3"
+cryptography = "45.0.2"
 
 
 [build-system]
