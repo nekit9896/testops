@@ -33,7 +33,7 @@ HTML_CONTENT_TYPE = "text/html"
 # Upload files
 STATUS_KEY = "status"
 PENDING_STATUS = "pending"
-STATUS_PASS = "success"
+STATUS_PASS = "passed"
 STATUS_FAIL = "fail"
 ENCODING = "utf-8"
 RESULT_NAMING = "result.json"
