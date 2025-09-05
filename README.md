@@ -21,9 +21,8 @@ flask db upgrade
 
 ## Быстродокер
 ```bash
-docker build -t testops-flask-app .
-docker tag testops-flask-app nekit9896/testops-flask-app:v0.0.1
-docker push nekit9896/testops-flask-app:v0.0.1
+docker build -t nekit9896/testops-flask-app:v1.0.18 -f Dockerfile .
+docker push nekit9896/testops-flask-app:v1.0.18
 docker exec -it testops-flask-app bash
 
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image nekit9896/system-dependencies:v0.1

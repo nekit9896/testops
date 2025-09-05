@@ -2,6 +2,7 @@
 *~tmp
 *.log
 *logs*
+*migrations*
 
 # Исключить папки
 __pycashe__/
