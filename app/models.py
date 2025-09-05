@@ -1,11 +1,11 @@
-from sqlalchemy import (Boolean, Column, DateTime, ForeignKey, Integer, String,
-                        Table, Text, UniqueConstraint, func)
+from sqlalchemy import (Boolean, Column, DateTime, ForeignKey, Index, Integer,
+                        String, Table, Text, UniqueConstraint, func)
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import backref, relationship
 
 from . import db
 
-# Ассоциация тегов для многих ко многим
+# tags association (plain table)
 test_case_tags = Table(
     "test_case_tags",
     db.Model.metadata,
@@ -37,7 +37,7 @@ class TestResult(db.Model):
         return f"<TestRun {self.run_name} ({self.created_at})>"
 
 
-# Таблица ассоциаций TestCase <-> TestSuite для реализации многих ко многим
+# association object (class) for TestCase <-> TestSuite with position
 class TestCaseSuite(db.Model):
     __tablename__ = "test_case_suites"
 
@@ -49,11 +49,19 @@ class TestCaseSuite(db.Model):
     )
     position = Column(Integer, nullable=True)
 
-    # ORM связи к основным сущностям (link -> test_case, link -> suite)
+    # use backref to avoid ordering issues:
     test_case = relationship(
-        "TestCase", back_populates="suite_links", passive_deletes=True
+        "TestCase",
+        backref=backref(
+            "suite_links", cascade="all, delete-orphan", passive_deletes=True
+        ),
     )
-    suite = relationship("TestSuite", back_populates="case_links", passive_deletes=True)
+    suite = relationship(
+        "TestSuite",
+        backref=backref(
+            "case_links", cascade="all, delete-orphan", passive_deletes=True
+        ),
+    )
 
     def __repr__(self):
         return f"<TestCaseSuite tc={self.test_case_id} suite={self.suite_id} pos={self.position}>"
@@ -66,13 +74,19 @@ class TestCase(db.Model):
     preconditions = Column(Text, nullable=True)
     description = Column(Text, nullable=True)
     expected_result = Column(Text, nullable=True)
-    created_at = Column(DateTime, default=func.now(), nullable=False)
-    updated_at = Column(
-        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    deleted_at = Column(DateTime, nullable=True)
+    updated_at = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    deleted_at = Column(DateTime(timezone=True), nullable=True)
     is_deleted = Column(Boolean, default=False, nullable=False)
 
+    # steps
     steps = relationship(
         "TestCaseStep",
         back_populates="test_case",
@@ -81,16 +95,11 @@ class TestCase(db.Model):
         passive_deletes=True,
     )
 
-    # Ассоциативные объектные зависимости (используем link-объекты)
-    suite_links = relationship(
-        "TestCaseSuite",
-        back_populates="test_case",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
+    # suites via association object: `suite_links` created by backref above
+    # expose convenient proxy list:
     suites = association_proxy("suite_links", "suite")
 
-    # Тэги (plain M:N table) — passive_deletes=True оптимизирует удаление при ON DELETE CASCADE
+    # tags
     tags = relationship(
         "Tag",
         secondary=test_case_tags,
@@ -100,6 +109,7 @@ class TestCase(db.Model):
 
     __table_args__ = (
         UniqueConstraint("name", "is_deleted", name="uq_testcase_name_active"),
+        Index("ix_test_cases_is_deleted", "is_deleted"),
     )
 
     def __repr__(self):
@@ -117,10 +127,11 @@ class TestCaseStep(db.Model):
     expected = Column(Text, nullable=True)
     attachments = Column(Text, nullable=True)
 
-    test_case = relationship("TestCase", back_populates="steps")
+    test_case = relationship("TestCase", back_populates="steps", passive_deletes=True)
 
     __table_args__ = (
         UniqueConstraint("test_case_id", "position", name="uq_steps_per_case_position"),
+        Index("ix_steps_test_case_id", "test_case_id"),
     )
 
     def __repr__(self):
@@ -142,18 +153,18 @@ class TestSuite(db.Model):
         cascade="all, delete-orphan",
     )
 
-    created_at = Column(DateTime, default=func.now(), nullable=False)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
     updated_at = Column(
-        DateTime, default=func.now(), onupdate=func.now(), nullable=False
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
     )
     is_deleted = Column(Boolean, default=False, nullable=False)
 
-    ase_links = relationship(
-        "TestCaseSuite",
-        back_populates="suite",
-        cascade="all, delete-orphan",
-        passive_deletes=True,
-    )
+    # `case_links` is provided automatically by backref in TestCaseSuite
     test_cases = association_proxy("case_links", "test_case")
 
     def __repr__(self):
@@ -165,7 +176,10 @@ class Tag(db.Model):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(100), nullable=False, unique=True)
     test_cases = relationship(
-        "TestCase", secondary=test_case_tags, back_populates="tags"
+        "TestCase",
+        secondary=test_case_tags,
+        back_populates="tags",
+        passive_deletes=True,
     )
 
     def __repr__(self):
