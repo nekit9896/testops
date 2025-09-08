@@ -17,7 +17,136 @@
 flask db init
 flask db migrate -m "Initial Migration"
 flask db upgrade
+
+flask db stamp <stamp_id>
 ```
+
+Для отладки:
+внутри контейнера скриптом можно чекнуть текущие таблицы:
+```
+python - <<'PY'
+from app import create_app, db
+app = create_app()
+with app.app_context():
+    print(sorted(db.metadata.tables.keys()))
+PY
+```
+
+
+# Хранение данных
+
+## Кратко про таблицы testops
+
+- **TestCase** — тест-кейс (metadata, steps, tags, привязки к сьютам).  
+- **TestCaseStep** — шаги тест-кейса (позиция, действие, ожидаемый результат).  
+- **TestSuite** — группа / папка тест-кейсов (иерархия через `parent_id`).  
+- **TestCaseSuite** — ассоциативный объект между `TestCase` и `TestSuite` (содержит `position` — порядок кейса в сьюте).  
+- **Tag + test_case_tags** — простая M:N-таблица для тегов.  
+- **TestResult** — результаты прогонов.
+
+**База:** Postgres. **ORM:** Flask-SQLAlchemy / SQLAlchemy. **Миграции:** Alembic (Flask-Migrate). **Файлы:** MinIO (S3-type)
+
+---
+
+## ER / Структура
+- **test_cases** (1 — N) test_case_steps
+- **test_cases** (M — N) test_suites через test_case_suites (association-class)
+- **test_cases** (M — N) tags через test_case_tags (plain table)
+- **test_suites** рекурсивно: parent_id -> test_suites.id
+- **testrun_results** — отдельная сущность, хранит прогоны
+
+
+## Описание моделей и полей
+
+### TestCase
+- `id` — PK  
+- `name` — строка (255)  
+- `preconditions`, `description`, `expected_result` — текстовые поля  
+- `created_at`, `updated_at`, `deleted_at`, `is_deleted` — временные метки и soft-delete  
+- `steps` — relationship к `TestCaseStep`, упорядочены по `position`  
+- `suites` — `association_proxy` к `TestSuite` через `TestCaseSuite`  
+- `tags` — M:N через `test_case_tags`  
+- `UniqueConstraint('name', 'is_deleted')` — уникальность среди активных записей
+
+---
+
+### TestCaseStep
+- `id` — PK  
+- `test_case_id` — FK -> `test_cases.id` (`ON DELETE CASCADE`)  
+- `position` — integer (порядок шага)  
+- `action`, `expected`, `attachments` — текст  
+- `UniqueConstraint('test_case_id', 'position')` — уникальная позиция в кейсе
+
+---
+
+### TestSuite
+- `id` — PK  
+- `name` — строка (255)  
+- `description` — текст  
+- `parent_id` — FK -> `test_suites.id` (смежные), `ondelete=SET NULL`  
+- `children` — relationship для под-папок  
+- `case_links` — relationship к `TestCaseSuite`  
+- `test_cases` — `association_proxy("case_links", "test_case")`  
+- `is_deleted` — bool  
+- `created_at`, `updated_at` — timestamps
+
+---
+
+### TestCaseSuite (association object)
+- `test_case_id`, `suite_id` — составной PK  
+- `position` — порядок кейса в сьюте  
+- `test_case`, `suite` — relationship с `back_populates`/`backref`  
+
+> Это полноценный ORM-класс — `position` доступен как `link.position`.
+
+---
+
+### Tag + test_case_tags
+- `Tag.name` уникален  
+- `test_case_tags` — plain table с PK (`test_case_id`, `tag_id`)
+
+---
+
+### TestResult
+- `id`, `run_name`, `start_date`, `end_date`, `status`, `created_at`, `is_deleted`  
+- Хранит метаданные прогонов тестов (используется в `reports/UI`).
+
+---
+
+## Особенности реализации хранения
+
+### Ассоциационная модель `TestCaseSuite`
+**Причина:** нужно хранить порядок кейсов внутри сьюта (`position`) и, возможно, другие атрибуты связи в будущем.  
+**Следствие:** используем `association-class` (класс-модель). Это даёт удобный доступ в ORM: `link.position`, простое обновление порядка и нормальные запросы.
+
+---
+
+### Plain table для тегов (`test_case_tags`)
+**Причина:** теги не требуют дополнительных полей в связи.  
+**Следствие:** простая и быстрая M:N таблица — меньше кода и индексации.
+
+---
+
+### Soft-delete (`is_deleted`, `deleted_at`) + уникальность `name, is_deleted`
+**Причина:** нужно сохранять историю или давать возможность восстановить удалённые кейсы.  
+**Следствие:** уникальность применяется среди активных записей; фильтрация `WHERE is_deleted = false` обязательна при запросах в UI.
+
+---
+
+### FK `ON DELETE CASCADE` + ORM `passive_deletes=True` / `cascade="all, delete-orphan"`
+**Причина:** необходимо обеспечить целостность данных при реальном удалении (DB-level cascade) и оптимизировать работу ORM.  
+**Следствие:** при `DELETE` родителя СУБД удалит дочерние записи; ORM не генерирует лишние DELETE-запросы.
+
+---
+
+### `parent_id` с `SET NULL` у `TestSuite`
+**Причина:** при удалении родителя не хочется массово удалять все дочерние сьюты автоматически.  
+**Следствие:** дочерние получат `NULL` и могут быть обработаны вручную/перемещены.
+
+---
+
+
+
 
 ## Быстродокер
 ```bash
@@ -27,6 +156,7 @@ docker exec -it testops-flask-app bash
 
 docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image nekit9896/system-dependencies:v0.1
 ```
+
 
 Пример запроса
 ```bash
