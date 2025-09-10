@@ -158,9 +158,108 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image
 ```
 
 
-Пример запроса
+Примеры запросов
 ```bash
-curl -X POST http://localhost:5000/upload -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\0477e9be-9f9a-4301-9792-784ae94c08bb-result.json"      -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\3383fa62-dce1-4ac2-abc6-ead40f3f4b7a-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\11327270-8aab-4d37-81b4-6488855be7f4-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\a66c33e6-bb8c-4fa2-b268-0d47342c76a3-result.json" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\b33d1db4-fc93-460f-925e-e4e1535b0c9e-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\ba852533-61b6-45f4-ae51-483aaedb8871-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\d3c09ae1-4f16-400b-a70e-abfb701ea0de-container.json" -v
+curl -X POST 'http://localhost:5000/upload' -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\0477e9be-9f9a-4301-9792-784ae94c08bb-result.json"      -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\3383fa62-dce1-4ac2-abc6-ead40f3f4b7a-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\11327270-8aab-4d37-81b4-6488855be7f4-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\a66c33e6-bb8c-4fa2-b268-0d47342c76a3-result.json" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\b33d1db4-fc93-460f-925e-e4e1535b0c9e-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\ba852533-61b6-45f4-ae51-483aaedb8871-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\d3c09ae1-4f16-400b-a70e-abfb701ea0de-container.json" -v
+```
+```bash
+export LANG=en_US.UTF-8  # делаем локаль UTF-8 в текущей сессии (рекомендовано)
+cat > payload.json <<'JSON'
+{
+  "name": "Созданный через curl тест-кейс",
+  "preconditions": "Авторизация: пользователь залогинен",
+  "description": "Пошаговая проверка входа и создания записи",
+  "expected_result": "Запись создаётся, данные отображаются в списке",
+  "steps": [
+    {"position": 1, "action": "Открыть поле ввода", "expected": "Поле ввода открылось"},
+    {"position": 2, "action": "Ввести текст и отправить", "expected": "Текст введен и отправлен"},
+    {"action": "Заполнить форму и отправить", "expected": "Появилось подтверждение", "attachments": "screenshot-1.png"}
+  ],
+  "tags": ["smoke", {"name": "regression"}],
+  "suite_links": [{"suite_name": "API Suite", "position": 2}]
+}
+JSON
+curl -v -i -X POST 'http://localhost:5000/test_cases' \
+  -H 'Content-Type: application/json; charset=utf-8' \
+  --data-binary @payload.json
+```
+
+### POST /test_cases — Создание тест-кейса
+
+#### Описание
+
+POST /test_cases — создаёт TestCase и опционально связанные сущности: `steps`, `tags`, `suite_links`.
+Принимает JSON, вызывает `create_test_case_from_payload`, мапит доменные исключения на HTTP-статусы и возвращает сериализованный созданный объект.
+
+#### Правила поведения
+
+##### Теги (tags):
+- Строка "smoke" или объект `{"name": "regression"}` → ищем по имени, если нет — создаём новый тег.
+- Объект `{"id": N}` → если тег с таким id есть — привяжем; если нет — элемент будет пропущен и в логах появится warning. (Терпимое поведение по умолчанию.)
+- Suite links (suite_links):
+    - `{"suite_name": "API Suite"}` → ищем по имени, если нет — создаём новый TestSuite.
+    - `{"suite_id": N}` → если suite с таким id есть — привяжем; если нет — элемент будет пропущен и логируется warning.
+
+##### Шаги (steps):
+Каждый шаг обязателтно имеет action (не пустая строка).
+`position` опционален — если отсутствует, позиции назначаются автоматически (последовательные).
+Дубликат `position` в рамках одного тест-кейса → ошибка валидации (400).
+
+##### Уникальность имени:
+Constraint на `name` + `is_deleted`. Попытка создать активный тест-кейс с уже существующим именем вернёт 409 Conflict.
+
+##### Ожидаемый JSON-body (пример)
+```json
+{
+  "name": "string (required)",
+  "preconditions": "string (optional)",
+  "description": "string (optional)",
+  "expected_result": "string (optional)",
+  "steps": [
+    {"position": 1, "action": "string (required)", "expected": "string (optional)", "attachments": "string (optional)"},
+    {"action": "string"}
+  ],
+  "tags": [
+    "string",          
+    {"id": 5},              
+    {"name": "regression"}   
+  ],
+  "suite_links": [
+    {"suite_id": 3, "position": 1},             
+    {"suite_name": "API Suite", "position": 2}  
+  ]
+}
+```
+
+##### Примеры ответов
+201 Created — успех
+
+Headers:
+```
+Location: /test_cases/123
+Content-Type: application/json
+```
+
+
+Body:
+```json
+{
+  "id": 123,
+  "name": "Созданный через curl тест-кейс",
+  "preconditions": "Авторизация: пользователь залогинен",
+  "description": "Проверка формы",
+  "expected_result": "Запись создаётся",
+  "created_at": "2025-09-10T09:21:56.123456+00:00",
+  "updated_at": "2025-09-10T09:21:56.123456+00:00",
+  "is_deleted": false,
+  "steps": [
+    {"id": 1, "position": 1, "action": "Открыть поле ввода", "expected": "Поле открылось", "attachments": null},
+    {"id": 2, "position": 2, "action": "Ввести текст и отправить", "expected": "Текст отправлен", "attachments": null},
+    {"id": 3, "position": 3, "action": "Проверить подтверждение", "expected": "Появилось подтверждение", "attachments": null}
+  ],
+  "tags": [{"id": 1, "name": "smoke"}, {"id": 2, "name": "regression"}],
+  "suites": [{"id": 5, "name": "API Suite", "position": 2}]
+}
 ```
 
 ### DELETE /delete_test_run/<int:run_id>
