@@ -1,5 +1,7 @@
-from flask import Blueprint, Response, abort, jsonify, render_template, request
+from flask import (Blueprint, Response, abort, jsonify, render_template,
+                   request, url_for)
 from sqlalchemy.exc import DatabaseError
+from werkzeug.routing import BuildError
 
 import constants as const
 import helpers
@@ -7,6 +9,9 @@ from app import db
 from app.clients import MinioClient
 from app.models import TestResult
 from logger import init_logger
+from testcase_helpers import (ConflictError, NotFoundError, ValidationError,
+                              create_test_case_from_payload,
+                              serialize_test_case)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -179,3 +184,84 @@ def delete_test_run(run_id):
         error_msg = "TestRun не найден"
         logger.error(error_msg, run_id=run_id)
         abort(404, description=error_msg)
+
+
+@bp.route("/test_cases", methods=["POST"])
+def create_test_case():
+    """
+    Создаёт TestCase вместе с опциональными: steps, tags, suite_links.
+
+    Ожидаемый JSON-body:
+    {
+      "name": "...",
+      "preconditions": "...",
+      "description": "...",
+      "expected_result": "...",
+      "steps": [
+          {"position": 1, "action": "...", "expected": "..."},
+          {"action": "..."}  # position назначается автоматически
+      ],
+      "tags": ["smoke", {"id": 5}, {"name": "regression"}],
+      "suite_links": [
+          {"suite_id": 3, "position": 1},
+          {"suite_name": "...", "position": 2}
+      ]
+    }
+
+    Роль этой функции — обёртка HTTP <-> domain:
+    - читает JSON,
+    - вызывает create_test_case_from_payload (всё в transaction),
+    - мапит доменные исключения на HTTP-коды,
+    - возвращает 201 с Location и телом созданного ресурса.
+    """
+    payload = request.get_json(silent=True)
+    if not payload:
+        logger.error("create_test_case: пустой или некорректный JSON")
+        abort(400, description="Invalid or missing JSON body")
+
+    try:
+        # Всю логику создания в helper — там транзакция и валидация
+        tc = create_test_case_from_payload(payload)
+
+    except ValidationError as ve:
+        # Ошибки валидации входных данных -> 400 Bad Request
+        logger.warning(
+            "Ошибки валидации входных данных при создании TestCase", exc_info=ve
+        )
+        abort(400, description=str(ve))
+
+    except NotFoundError as ne:
+        # Ссылка на несуществующий Tag/Suite -> 404 Not Found
+        logger.warning(
+            "Ссылка на несуществующий Tag/Suite при создании TestCase", exc_info=ne
+        )
+        abort(404, description=str(ne))
+
+    except ConflictError as ce:
+        # Конфликт целостности (например уникальное имя) -> 409 Conflict
+        logger.warning("Конфликт при создании TestCase", exc_info=ce)
+        abort(409, description=str(ce))
+
+    except DatabaseError as dbe:
+        # Ошибки БД — откатываем сессию и возвращаем 500
+        db.session.rollback()
+        logger.exception("Ошибка БД при создании TestCase", exc_info=dbe)
+        abort(500, description="Database error")
+
+    except Exception as e:
+        # Непредвиденные ошибки — откат и 500
+        db.session.rollback()
+        logger.exception("Непредвиденная ошибка при создании TestCase", exc_info=e)
+        abort(500, description="Unexpected error")
+
+    # Успех — сериализуем и возвращаем 201 Created с локой
+    body = serialize_test_case(tc)
+    try:
+        # Пытаемся сформировать URL через именованный роут get_test_case
+        location = url_for("routes.get_test_case", id=tc.id)
+    except BuildError:
+        # Если детального роутa ещё нет — используем fallback путь
+        location = f"/test_cases/{tc.id}"
+
+    response = jsonify(body)
+    return response, 201, {"Location": location}
