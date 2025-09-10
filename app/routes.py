@@ -4,14 +4,14 @@ from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
 
 import constants as const
-import helpers
+from helpers import testrun_helpers
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
 from logger import init_logger
-from testcase_helpers import (ConflictError, NotFoundError, ValidationError,
-                              create_test_case_from_payload,
-                              serialize_test_case)
+from helpers.testcase_helpers import (ConflictError, NotFoundError, ValidationError,
+                                      create_test_case_from_payload,
+                                      serialize_test_case)
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -50,10 +50,10 @@ def upload_results():
             abort(400, description="Необходимо загрузить хотя бы один файл")
 
         # Проверка размера файлов
-        helpers.check_files_size(files)
+        testrun_helpers.check_files_size(files)
 
         # Шаг 2. Создаем временную запись о запуске автотестов в БД
-        new_result = helpers.create_temporary_test_result()
+        new_result = testrun_helpers.create_temporary_test_result()
         logger.info("Создана новая временная запись о запуске автотестов")
 
     except DatabaseError as error_msg:
@@ -64,7 +64,7 @@ def upload_results():
 
     # Шаг 3. Анализируем файлы и извлекаем параметры запуска автотестов
     try:
-        test_run_info = helpers.check_all_tests_passed_run(files)
+        test_run_info = testrun_helpers.check_all_tests_passed_run(files)
         if not test_run_info:
             logger.error("Не удалось извлечь параметры тестрана")
             abort(400, description="Ошибка анализа файлов")
@@ -74,7 +74,7 @@ def upload_results():
 
     # Шаг 4. Формируем уникальное имя для запуска автотестов и обновляем данные в БД
     try:
-        helpers.update_test_result(new_result, test_run_info)
+        testrun_helpers.update_test_result(new_result, test_run_info)
         logger.info(f"Обновлены данные тестрана с ID: {new_result.id}")
     except DatabaseError as error_msg:
         # Откат транзакций в случае исключения
@@ -87,18 +87,18 @@ def upload_results():
     error_files = []
     logger.info("Загрузка файлов в Minio", run_name=new_result.run_name)
     for file in files:
-        if not file or not helpers.allowed_file(file.filename):
+        if not file or not testrun_helpers.allowed_file(file.filename):
             logger.error(f"Недопустимый файл: {file.filename}")
             error_files.append(file.filename)
             continue  # Пропуск недопустимого файла и продолжение обработки
 
         try:
-            successful_filename = helpers.process_and_upload_file(
+            successful_filename = testrun_helpers.process_and_upload_file(
                 new_result.run_name, file
             )
             if successful_filename:
                 success_files.append(successful_filename)
-        except (helpers.DatabaseError, OSError) as file_error:
+        except (testrun_helpers.DatabaseError, OSError) as file_error:
             logger.exception(f"Ошибка обработки файла {file.filename}: {file_error}")
             db.session.rollback()
             error_files.append(file.filename)
@@ -121,8 +121,8 @@ def get_reports():
     """
     Возвращает страницу со списком отчетов
     """
-    results = helpers.fetch_reports()
-    helpers.log_reports(results)
+    results = testrun_helpers.fetch_reports()
+    testrun_helpers.log_reports(results)
     return render_template(const.TEMPLATE_REPORTS, results=results)
 
 
@@ -147,7 +147,7 @@ def view_report(result_id: int):
 
     # Проверка на существование и статус TestResult
     if not testrun or testrun.is_deleted:
-        helpers.log_and_abort(result_id, testrun)
+        testrun_helpers.log_and_abort(result_id, testrun)
 
     run_name = testrun.run_name
 
@@ -155,7 +155,7 @@ def view_report(result_id: int):
     minio_client.ensure_bucket_exists(const.ALLURE_REPORTS_BUCKET_NAME)
 
     # Получение или генерация allure-report
-    html_file = helpers.get_or_generate_report(run_name)
+    html_file = testrun_helpers.get_or_generate_report(run_name)
 
     # Возвращает HTML как ответ
     html_content = html_file.read().decode("utf-8")

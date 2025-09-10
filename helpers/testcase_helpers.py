@@ -10,7 +10,7 @@ from app.models import Tag, TestCase, TestCaseStep, TestCaseSuite, TestSuite
 
 
 # -------------------------------
-# Domain-specific exceptions
+# Исключения, специфичные для домена
 # -------------------------------
 class TestCaseError(Exception):
     """Базовое исключение для ошибок, связанных с TestCase.
@@ -74,11 +74,11 @@ def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # Простые валидации типов
     if not isinstance(normalized["steps"], list):
-        raise ValidationError("Field 'steps' must be a list")
+        raise ValidationError("Поле 'steps' должно быть списком")
     if not isinstance(normalized["tags"], list):
-        raise ValidationError("Field 'tags' must be a list")
+        raise ValidationError("Поле 'tags' должно быть списком")
     if not isinstance(normalized["suite_links"], list):
-        raise ValidationError("Field 'suite_links' must be a list")
+        raise ValidationError("Поле 'suite_links' должно быть списком")
 
     return normalized
 
@@ -128,11 +128,11 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[Tag]:
       чтобы вызывающий код мог решить — пропустить или считать это ошибкой.
     - Если передан 'name' -> ищем по имени, создаём, если нет.
     """
-    # Случай: ссылка по id
+    # Пытаемся взять тег по id
     if "id" in normalized:
         tag = _get_tag_by_id(normalized["id"])
         if not tag:
-            # Это полезно при миграции/несовершенных клиентах, чтобы не ломать весь payload.
+            # Чтобы не ломать весь payload.
             return None
         return tag
 
@@ -277,7 +277,7 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
                 if tag is None:
                     logger = __import__(
                         "logger"
-                    ).init_logger()  # аккуратно получить Гоггер без циклических импортов
+                    ).init_logger()  # аккуратно получить логгер без циклических импортов
                     logger.warning(
                         f"Тег, на который ссылается id={normalized.get('id')} не найден — пропускаем, "
                         f"тэги не обязательны"
@@ -343,14 +343,14 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
     except IntegrityError as ie:
         db.session.rollback()
         raise ConflictError(
-            "Integrity error when creating TestCase (probably duplicate name)"
+            "Ошибка целостности бд при создании TestCase (вероятно, дублирующееся имя)"
         ) from ie
 
     return test_case
 
 
 # -------------------------------
-# Serializer
+# Сериализатор
 # -------------------------------
 def serialize_test_case(tc: TestCase) -> Dict[str, Any]:
     """Преобразует TestCase в JSON-совместимый словарь.
