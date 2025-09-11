@@ -42,6 +42,10 @@ START_RUN_KEY = "start"
 STOP_RUN_KEY = "stop"
 TIMESTAMP_DIVISOR = 1000
 
+# Тест кейсы:
+ASCII_CODING = "ascii"
+TESTCASE_PER_PAGE_LIMIT = 25
+
 # Other
 DB_DATE_FORMAT = "%Y%m%d_%H%M%S"
 VIEW_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
