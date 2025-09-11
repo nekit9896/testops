@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import base64
+import json
 from datetime import datetime, timezone
-from typing import Any, Dict, Iterable, List, Optional, Union
+from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+from sqlalchemy import and_, asc, desc, or_
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import joinedload
 
 from app import db
 from app.models import Tag, TestCase, TestCaseStep, TestCaseSuite, TestSuite
+from constants import ASCII_CODING, ENCODING, TESTCASE_PER_PAGE_LIMIT
 
 
 # -------------------------------
@@ -383,3 +388,190 @@ def serialize_test_case(tc: TestCase) -> Dict[str, Any]:
             for link in tc.suite_links
         ],
     }
+
+
+# ---------- Парсинг входных параметров ----------
+def parse_bool_param(raw_value: Optional[Union[str, bool]]) -> Optional[bool]:
+    """
+    Корректно парсит булев параметр из query string.
+    Допустимые true: "1","true","yes","y" (регистр не важен).
+    Допустимые false: "0","false","no","n".
+    Возвращает None если вход пустой или нераспознан.
+    """
+    if raw_value is None:
+        return None
+    if isinstance(raw_value, bool):
+        return raw_value
+    normalized_value = str(raw_value).strip().lower()
+    if normalized_value in ("1", "true", "yes", "y"):
+        return True
+    if normalized_value in ("0", "false", "no", "n"):
+        return False
+    return None
+
+
+# ---------- Cursor helpers ----------
+def _encode_cursor(obj: dict) -> str:
+    """
+    Кодируем cursor-объект (например {'created_at': 'ISO', 'id': 123})
+    в URL-safe base64 строку. Возвращаем str.
+    """
+    # Сериализуем объект в компактную JSON-строку (без лишних пробелов)
+    json_str = json.dumps(obj, separators=(",", ":"), ensure_ascii=False)
+    # Кодируем JSON в байты UTF-8
+    json_bytes = json_str.encode(ENCODING)
+    # Кодируем байты в URL-safe base64 и возвращаем ascii-строку
+    encoded_bytes = base64.urlsafe_b64encode(json_bytes)
+    encoded_str = encoded_bytes.decode(ASCII_CODING)
+    return encoded_str
+
+
+def _decode_cursor(cursor_str: str) -> dict:
+    """
+    Декодируем cursor-строку, возвращаем dict.
+    При ошибке бросаем ValueError.
+    """
+    # Декодируем base64 (получаем JSON в виде байтов)
+    try:
+        encoded_bytes = cursor_str.encode(ASCII_CODING)
+        json_bytes = base64.urlsafe_b64decode(encoded_bytes)
+        json_str = json_bytes.decode(ENCODING)
+        obj = json.loads(json_str)
+    except Exception as exc:
+        # Пробрасываем ValueError с понятным сообщением — вызывающий код обработает это как ValidationError
+        raise ValueError("Неверный формат курсора") from exc
+
+    return obj
+
+
+# ---------- Cursor-based list function ----------
+def get_test_cases_cursored(
+    *,
+    q: Optional[str] = None,
+    tags: Optional[List[str]] = None,
+    suite_ids: Optional[List[int]] = None,
+    suite_name: Optional[str] = None,
+    limit: int = 25,
+    cursor: Optional[str] = None,
+    sort: str = "-created_at",
+    include_deleted: bool = False,
+) -> Tuple[List["TestCase"], Dict[str, Any]]:
+    """
+    Возвращает (items, meta) используя cursor-based pagination.
+
+    Поддерживаемые параметры:
+      - q: частичный поиск по name и description (case-insensitive)
+      - tags: список имён тегов (фильтр ANY)
+      - suite_ids: список id сьютов (фильтр ANY)
+      - suite_name: частичный поиск по имени сьюта (case-insensitive)
+      - limit: количество элементов (1..200), дефолт 25
+      - cursor: курсор (base64 JSON, полученный из предыдущего ответа)
+      - sort: '-created_at' или 'created_at' (допускается только created_at для курсора)
+      - include_deleted: показывать удалённые записи
+    Возвращает:
+      - items: список объектов TestCase (SQLAlchemy)
+      - meta: { next_cursor: str|None, limit: int, returned: int }
+    """
+    # Защита limit
+    limit = int(limit or TESTCASE_PER_PAGE_LIMIT)
+    limit = min(max(1, limit), 200)
+
+    # Базовый query с eager-loading чтобы избежать N+1
+    query = TestCase.query.options(
+        joinedload(TestCase.tags),
+        joinedload(TestCase.steps),
+        joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+    )
+
+    # is_deleted фильтр
+    if not include_deleted:
+        query = query.filter(TestCase.is_deleted.is_(False))
+    else:
+        query = query.filter(TestCase.is_deleted.is_(True))
+
+    # Поиск q
+    if q:
+        pattern = f"%{q}%"
+        query = query.filter(
+            or_(TestCase.name.ilike(pattern), TestCase.description.ilike(pattern))
+        )
+
+    # Фильтрация по тегам (ANY)
+    if tags:
+        query = query.join(TestCase.tags).filter(Tag.name.in_(tags))
+
+    # Фильтрация по suite_ids (ANY)
+    if suite_ids:
+        query = query.join(TestCase.suite_links).filter(
+            TestCaseSuite.suite_id.in_(suite_ids)
+        )
+
+    # Фильтрация по suite_name (partial)
+    if suite_name:
+        pattern_suite = f"%{suite_name}%"
+        query = (
+            query.join(TestCase.suite_links)
+            .join(TestCaseSuite.suite)
+            .filter(TestSuite.name.ilike(pattern_suite))
+        )
+
+    # Сортировка: поддерживаем только created_at (вторичный ключ - id)
+    sort_key = str(sort or "-created_at").strip()
+    descending = sort_key.startswith("-")
+    # если клиент передал не supported поле — fallback на '-created_at'
+    if sort_key.lstrip("-") != "created_at":
+        descending = True
+
+    primary_order = (
+        desc(TestCase.created_at) if descending else asc(TestCase.created_at)
+    )
+    secondary_order = desc(TestCase.id) if descending else asc(TestCase.id)
+    query = query.order_by(primary_order, secondary_order)
+
+    # Применяем курсор (если он есть)
+    if cursor:
+        try:
+            cur_obj = _decode_cursor(cursor)
+            cursor_created_at = datetime.fromisoformat(cur_obj["created_at"])
+            cursor_id = int(cur_obj["id"])
+        except Exception as exc:
+            # нормализуем ошибку в доменную ValidationError на уровне вызывающего кода
+            raise ValueError("Invalid cursor") from exc
+
+        if descending:
+            # (created_at < cursor_created_at) OR (created_at == cursor_created_at AND id < cursor_id)
+            query = query.filter(
+                or_(
+                    TestCase.created_at < cursor_created_at,
+                    and_(
+                        TestCase.created_at == cursor_created_at,
+                        TestCase.id < cursor_id,
+                    ),
+                )
+            )
+        else:
+            # (created_at > cursor_created_at) OR (created_at == cursor_created_at AND id > cursor_id)
+            query = query.filter(
+                or_(
+                    TestCase.created_at > cursor_created_at,
+                    and_(
+                        TestCase.created_at == cursor_created_at,
+                        TestCase.id > cursor_id,
+                    ),
+                )
+            )
+
+    # Получаем limit+1 записей, чтобы понять, есть ли next page
+    rows = query.limit(limit + 1).all()
+    has_more = len(rows) > limit
+    items = rows[:limit]
+
+    # Формируем next_cursor по последнему элементу (если есть next)
+    next_cursor = None
+    if has_more and items:
+        last = items[-1]
+        cur_obj = {"created_at": last.created_at.isoformat(), "id": last.id}
+        next_cursor = _encode_cursor(cur_obj)
+
+    meta = {"next_cursor": next_cursor, "limit": limit, "returned": len(items)}
+    return items, meta

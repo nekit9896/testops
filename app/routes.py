@@ -1,17 +1,21 @@
+from typing import List, Optional
+
 from flask import (Blueprint, Response, abort, jsonify, render_template,
                    request, url_for)
 from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
 
 import constants as const
-from helpers import testrun_helpers
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from logger import init_logger
-from helpers.testcase_helpers import (ConflictError, NotFoundError, ValidationError,
+from helpers import testrun_helpers
+from helpers.testcase_helpers import (ConflictError, NotFoundError,
+                                      ValidationError,
                                       create_test_case_from_payload,
-                                      serialize_test_case)
+                                      get_test_cases_cursored,
+                                      parse_bool_param, serialize_test_case)
+from logger import init_logger
 
 bp = Blueprint("routes", __name__)
 minio_client = MinioClient()
@@ -158,7 +162,7 @@ def view_report(result_id: int):
     html_file = testrun_helpers.get_or_generate_report(run_name)
 
     # Возвращает HTML как ответ
-    html_content = html_file.read().decode("utf-8")
+    html_content = html_file.read().decode(const.ENCODING)
     return Response(html_content, mimetype="text/html")
 
 
@@ -246,13 +250,13 @@ def create_test_case():
         # Ошибки БД — откатываем сессию и возвращаем 500
         db.session.rollback()
         logger.exception("Ошибка БД при создании TestCase", exc_info=dbe)
-        abort(500, description="Database error")
+        abort(500, description="Ошибка базы данных")
 
     except Exception as e:
         # Непредвиденные ошибки — откат и 500
         db.session.rollback()
         logger.exception("Непредвиденная ошибка при создании TestCase", exc_info=e)
-        abort(500, description="Unexpected error")
+        abort(500, description="Неожиданная ошибка")
 
     # Успех — сериализуем и возвращаем 201 Created с локой
     body = serialize_test_case(tc)
@@ -265,3 +269,63 @@ def create_test_case():
 
     response = jsonify(body)
     return response, 201, {"Location": location}
+
+
+@bp.route("/test_cases", methods=["GET"])
+def list_test_cases():
+    """
+    Список тест-кейсов с cursor-based pagination.
+
+    Query params:
+      - q: поиск по name/description
+      - tag: можно указать несколько (?tag=smoke&tag=regression)
+      - suite_id: можно указать несколько (?suite_id=1&suite_id=2)
+      - suite_name: partial search по имени сьюта
+      - limit: int (1..200)
+      - cursor: cursor string из предыдущего ответа
+      - sort: (опционально) только 'created_at' или '-created_at' (по умолчанию '-created_at')
+      - include_deleted: true|false
+    """
+    q = request.args.get("q")
+    tags = request.args.getlist("tag") or None
+
+    suite_id_params = request.args.getlist("suite_id") or None
+    suite_ids: Optional[List[int]] = None
+    if suite_id_params:
+        parsed_suite_ids: List[int] = []
+        for raw_suite_id in suite_id_params:
+            try:
+                parsed_suite_ids.append(int(raw_suite_id))
+            except ValueError:
+                # игнорируем нечисловые значения
+                continue
+        if parsed_suite_ids:
+            suite_ids = parsed_suite_ids
+
+    suite_name = request.args.get("suite_name")
+    limit = request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT)
+    cursor = request.args.get("cursor")
+    sort = request.args.get("sort", "-created_at")
+    include_deleted = parse_bool_param(request.args.get("include_deleted"))
+
+    try:
+        items, meta = get_test_cases_cursored(
+            q=q,
+            tags=tags,
+            suite_ids=suite_ids,
+            suite_name=suite_name,
+            limit=limit,
+            cursor=cursor,
+            sort=sort,
+            include_deleted=bool(include_deleted),
+        )
+    except ValidationError as ve:
+        logger.warning("Ошибка валидации list_test_cases", exc_info=ve)
+        abort(400, description=str(ve))
+    except Exception as e:
+        logger.exception("Неожиданная ошибка в list_test_cases", exc_info=e)
+        abort(500, description="Ошибка базы данных")
+
+    serialized = [serialize_test_case(tc) for tc in items]
+    response = {"items": serialized, "meta": meta}
+    return jsonify(response)
