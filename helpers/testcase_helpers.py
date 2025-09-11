@@ -518,7 +518,7 @@ def get_test_cases_cursored(
     # Сортировка: поддерживаем только created_at (вторичный ключ - id)
     sort_key = str(sort or "-created_at").strip()
     descending = sort_key.startswith("-")
-    # если клиент передал не supported поле — fallback на '-created_at'
+    # если клиент передал не поддерживаемое поле — fallback на '-created_at'
     if sort_key.lstrip("-") != "created_at":
         descending = True
 

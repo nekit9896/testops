@@ -276,7 +276,7 @@ def list_test_cases():
     """
     Список тест-кейсов с cursor-based pagination.
 
-    Query params:
+    Параметры запроса:
       - q: поиск по name/description
       - tag: можно указать несколько (?tag=smoke&tag=regression)
       - suite_id: можно указать несколько (?suite_id=1&suite_id=2)
