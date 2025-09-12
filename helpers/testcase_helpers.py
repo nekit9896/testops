@@ -575,3 +575,43 @@ def get_test_cases_cursored(
 
     meta = {"next_cursor": next_cursor, "limit": limit, "returned": len(items)}
     return items, meta
+
+
+def get_test_case_by_id(
+    test_case_id: int, *, include_deleted: bool = False
+) -> TestCase:
+    """
+    Получает TestCase по его id с eager-loading связанных сущностей.
+
+    Поведение:
+      - Если TestCase с переданным id не найден -> бросает NotFoundError.
+      - Если TestCase найден, но помечен is_deleted и include_deleted == False -> тоже бросает NotFoundError.
+      - Возвращает объект TestCase  при успешном поиске.
+    Параметры:
+      - test_case_id: int — идентификатор искомого TestCase.
+      - include_deleted: bool — если True, разрешаем возвращать помеченные как удалённые записи.
+
+    Использует joinedload для подгрузки связей: steps, tags, suite_links->suite.
+    """
+    # Валидация аргумента
+    if not isinstance(test_case_id, int) or test_case_id <= 0:
+        raise ValidationError("test_case_id должен быть положительным целым числом")
+
+    # Используем joinedload, чтобы сразу подгрузить все нужные связи и избежать N+1
+    query = TestCase.query.options(
+        joinedload(TestCase.steps),
+        joinedload(TestCase.tags),
+        joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+    )
+
+    # Получаем объект
+    test_case = query.get(test_case_id)
+
+    if not test_case:
+        raise NotFoundError(f"TestCase с id={test_case_id} не найден")
+
+    # Если найден, но помечен как удалённый — по умолчанию скрываем
+    if test_case.is_deleted and not include_deleted:
+        raise NotFoundError(f"TestCase с id={test_case_id} удален")
+
+    return test_case

@@ -13,6 +13,7 @@ from helpers import testrun_helpers
 from helpers.testcase_helpers import (ConflictError, NotFoundError,
                                       ValidationError,
                                       create_test_case_from_payload,
+                                      get_test_case_by_id,
                                       get_test_cases_cursored,
                                       parse_bool_param, serialize_test_case)
 from logger import init_logger
@@ -329,3 +330,40 @@ def list_test_cases():
     serialized = [serialize_test_case(tc) for tc in items]
     response = {"items": serialized, "meta": meta}
     return jsonify(response)
+
+
+@bp.route("/test_cases/<int:test_case_id>", methods=["GET"])
+def get_test_case(test_case_id: int):
+    """
+    GET /test_cases/<id>
+
+    Возвращает один TestCase по id.
+
+    Поддерживает query-параметр:
+      - include_deleted=true|false  (по умолчанию false)
+
+    Ответы:
+      - 200 OK + JSON — если найден
+      - 400 Bad Request — если параметры неверны
+      - 404 Not Found — если TestCase не найден (или удалён и include_deleted не установлен)
+      - 500 Internal Server Error — при неизвестных ошибках БД
+    """
+    # Разбор optional-параметра include_deleted (string -> bool/None)
+    include_deleted_param = parse_bool_param(request.args.get("include_deleted"))
+    include_deleted = bool(include_deleted_param)
+
+    try:
+        tc = get_test_case_by_id(test_case_id, include_deleted=include_deleted)
+    except ValidationError as ve:
+        logger.warning("Ошибка валидации при получении TestCase", exc_info=ve)
+        abort(400, description=str(ve))
+    except NotFoundError as ne:
+        logger.info("TestCase не найден", exc_info=ne)
+        abort(404, description=str(ne))
+    except Exception as exc:
+        logger.exception("Неожиданная ошибка при получении TestCase", exc_info=exc)
+        abort(500, description="Ошибка сервера")
+
+    # Сериализуем и возвращаем
+    body = serialize_test_case(tc)
+    return jsonify(body)
