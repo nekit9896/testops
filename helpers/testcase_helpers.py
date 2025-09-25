@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import traceback
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from sqlalchemy import and_, asc, desc, or_
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import joinedload
 
 from app import db
@@ -147,10 +149,20 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[Tag]:
         tag = _get_tag_by_name(tag_name)
         if tag:
             return tag
+
         tag = Tag(name=tag_name)
         db.session.add(tag)
-        # flush, чтобы получить id сразу
-        db.session.flush()
+        try:
+            db.session.flush()  # пытаемся получить id сразу
+        except IntegrityError:
+            # Вероятно, другая транзакция создала такой тег между SELECT и INSERT.
+            # Откатываем локальный flush (не всю внешнюю транзакцию) и пробуем SELECT снова.
+            db.session.rollback()
+            tag = _get_tag_by_name(tag_name)
+            if tag:
+                return tag
+            # Если всё ещё нет — пробрасываем, пусть вызывающий код решает.
+            raise
         return tag
 
     raise ValidationError("Введенный тег не прошел валидацию")
@@ -214,7 +226,14 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[TestSuite]:
         now = datetime.now(timezone.utc)
         suite = TestSuite(name=name, created_at=now, updated_at=now)
         db.session.add(suite)
-        db.session.flush()
+        try:
+            db.session.flush()
+        except IntegrityError:
+            db.session.rollback()
+            suite = _get_suite_by_name(name)
+            if suite:
+                return suite
+            raise
         return suite
 
     raise ValidationError(
@@ -257,7 +276,7 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
     input_payload = _validate_basic_fields(payload)
 
     try:
-        with db.session.begin():
+        with _transaction_context():
             # Явно устанавливаем timestamps, чтобы не зависеть от server_default в БД
             now = datetime.now(timezone.utc)
             test_case = TestCase(
@@ -615,3 +634,222 @@ def get_test_case_by_id(
         raise NotFoundError(f"TestCase с id={test_case_id} удален")
 
     return test_case
+
+
+# --------- Транзакционный helper ---------
+@contextmanager
+def _transaction_context():
+    """
+    Контекст-менеджер транзакции с диагностикой.
+    - Пытаемся обычный begin(), если уже есть транзакция — begin_nested().
+    - Логируем bind.url и текущий pg backend pid (если возможно), stack при активной сессии.
+    """
+
+    # Проверим, кажется ли сессия уже в транзакции
+    try:
+        in_tx = bool(getattr(db.session, "in_transaction", lambda: False)())
+    except Exception:
+        in_tx = getattr(db.session, "transaction", None) is not None
+    logger = __import__("logger").init_logger()
+    logger.info(f"_transaction_context: before begin: session.in_transaction={in_tx}")
+
+    if in_tx:
+        stack = "".join(traceback.format_stack(limit=10))
+        logger.warning(
+            "_transaction_context: session already in transaction BEFORE begin(). "
+            "This often means some earlier code opened a transaction and didn't close it. "
+            f"Stack (top):\n{stack}"
+        )
+
+    # Попытка открыть обычную транзакцию, иначе nested (savepoint)
+    try:
+        tx_ctx = db.session.begin()
+        used = "begin"
+    except InvalidRequestError:
+        tx_ctx = db.session.begin_nested()
+        used = "begin_nested"
+        logger.info("_transaction_context: using begin_nested (savepoint)")
+
+    # Попробуем залогировать на какой bind/engine мы работаем и pg backend pid
+    try:
+        bind = db.session.get_bind()
+        # bind may be Engine or Connection
+        logger.info(f"_transaction_context: bind = {getattr(bind, 'url', repr(bind))}")
+        # попытка получить backend pid (Postgres-specific)
+        try:
+            conn = db.session.connection()
+            res = conn.execute("SELECT pg_backend_pid()").scalar()
+            logger.info(f"_transaction_context: pg_backend_pid = {res}")
+        except Exception:
+            logger.debug(
+                "_transaction_context: cannot determine pg_backend_pid (non-postgres or no connection)"
+            )
+    except Exception:
+        logger.exception("_transaction_context: failed to log bind/connection")
+
+    logger.debug(f"_transaction_context: entering ({used})")
+    try:
+        with tx_ctx:
+            yield
+    finally:
+        logger.debug(f"_transaction_context: exit ({used})")
+
+
+# --------- Update TestCase logic ---------
+def update_test_case_from_payload(
+    test_case_id: int, payload: Dict[str, Any]
+) -> TestCase:
+    """
+    Обновляет TestCase и связанные сущности на основании полученного payload.
+
+    Семантика: полный апдейт (PUT) — клиент передаёт полное представление
+    тест-кейса (то же, что для создания). Функция атомарна: все изменения
+    выполняются внутри транзакции; при ошибке происходит откат.
+
+    Поведение:
+      - Если TestCase с данным id не найден или помечен is_deleted -> NotFoundError.
+      - Валидирует payload (использует _validate_basic_fields) — требует 'name'.
+      - Обновляет поля name, preconditions, description, expected_result.
+      - Полностью заменяет steps (удаляет старые, создаёт новые).
+      - Заменяет теги: ищет/создаёт теги по имени, если указан id и тега нет — пропускает и логирует.
+      - Заменяет suite_links: по suite_id ищет, по suite_name — создаёт при необходимости;
+        если указан suite_id, которого нет — пропускает и логирует.
+      - Ловит IntegrityError и превращает в ConflictError (409).
+      - Возвращает обновлённый объект TestCase (подключённый к сессии).
+    """
+    # Небольшая валидация аргумента
+    if not isinstance(test_case_id, int) or test_case_id <= 0:
+        raise ValidationError("test_case_id должен быть положительным целым числом")
+
+    # Нормализуем и валидируем входной payload как для create (PUT требует полного описания)
+    normalized = _validate_basic_fields(payload)
+    logger = __import__("logger").init_logger()
+    try:
+        engine_url = getattr(db.engine, "url", None)
+        logger.info(f"update_test_case_from_payload: db.engine.url = {engine_url}")
+        # также log bind (на случай множественных binds)
+        logger.info(
+            f"update_test_case_from_payload: session.bind = {db.session.get_bind()!r}"
+        )
+    except Exception:
+        logger.exception("update_test_case_from_payload: failed to log engine/bind")
+
+    try:
+        # Контекст-менеджер гарантирует commit/rollback
+        with _transaction_context():
+            # Получаем текущий объект
+            tc = TestCase.query.options(
+                joinedload(TestCase.steps),
+                joinedload(TestCase.tags),
+                joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+            ).get(test_case_id)
+
+            if not tc or tc.is_deleted:
+                raise NotFoundError(f"TestCase with id={test_case_id} not found")
+            logger = __import__("logger").init_logger()
+            now = datetime.now(timezone.utc)
+
+            # Обновляем простые поля
+            tc.name = normalized["name"]
+            tc.preconditions = normalized.get("preconditions")
+            tc.description = normalized.get("description")
+            tc.expected_result = normalized.get("expected_result")
+            tc.updated_at = now
+
+            # -----------------------
+            # Обновляем теги (replace)
+            # -----------------------
+            new_tags: List[Tag] = []
+            tag_ids_seen = set()
+            for raw_tag in normalized["tags"]:
+                tag_norm = _normalize_tag_input(raw_tag)
+                if tag_norm.get("skip"):
+                    continue
+                tag_obj = _get_or_create_tag(tag_norm)
+                if tag_obj is None:
+                    # Если указан id и тега нет — логируем и пропускаем.
+                    logger.warning(
+                        f"При обновлении TestCase id={test_case_id}: "
+                        f"указанный тег id={tag_norm.get('id')} не найден — пропускаем"
+                    )
+                    continue
+                if tag_obj.id in tag_ids_seen:
+                    continue
+                tag_ids_seen.add(tag_obj.id)
+                new_tags.append(tag_obj)
+
+            # Назначаем новую коллекцию тегов (ORM SQLAlchemy обновит association table)
+            tc.tags[:] = new_tags
+
+            # -----------------------
+            # Обновляем шаги (replace все шаги)
+            # -----------------------
+            # 1) Помечаем старые шаги для удаления через коллекцию (delete-orphan настроен)
+            tc.steps[:] = []
+
+            # 2) Явно делаем flush, чтобы DELETE были отправлены в БД до INSERT новых строк.
+            # Это критично, иначе в некоторых случаях автосброс (autoflush) может привести
+            # к попытке вставки новых шагов до удаления старых -> UniqueViolation.
+            db.session.flush()
+
+            # 3) Создаём и добавляем новые шаги в коллекцию
+            auto_position = 1
+            positions_seen = set()
+            for raw_step in normalized["steps"]:
+                norm_step = _normalize_step_input(raw_step)
+                position = (
+                    norm_step["position"]
+                    if norm_step["position"] is not None
+                    else auto_position
+                )
+                if position in positions_seen:
+                    raise ValidationError(f"Duplicate step position: {position}")
+                positions_seen.add(position)
+                auto_position = max(auto_position, position + 1)
+                step = TestCaseStep(
+                    position=position,
+                    action=norm_step["action"],
+                    expected=norm_step.get("expected"),
+                    attachments=norm_step.get("attachments"),
+                )
+                tc.steps.append(step)
+
+            # -----------------------
+            # Обновляем связи с тест-сьютами (replace)
+            # -----------------------
+            # Удаляем старые связи через коллекцию
+            tc.suite_links[:] = []
+            # Убеждаемся, что удаление ссылок выполняется перед новыми вставками
+            db.session.flush()
+
+            suite_ids_seen = set()
+            for raw_suite_link in normalized["suite_links"]:
+                norm_suite_link = _normalize_suite_input(raw_suite_link)
+                suite_obj = _get_or_create_suite(norm_suite_link)
+                if suite_obj is None:
+                    logger.warning(
+                        f"При обновлении TestCase id={test_case_id}: "
+                        f"указанный TestSuite id={norm_suite_link.get('suite_id')} не найден — пропускаем"
+                    )
+                    continue
+                if suite_obj.id in suite_ids_seen:
+                    # избегаем дубликатов связей
+                    continue
+                suite_ids_seen.add(suite_obj.id)
+                link = TestCaseSuite(
+                    suite=suite_obj, position=norm_suite_link.get("position")
+                )
+                tc.suite_links.append(link)
+
+            # Финальный flush и refresh
+            db.session.flush()
+            db.session.refresh(tc)
+
+    except IntegrityError as ie:
+        # Откат транзакции и информативное исключение для роутера
+        db.session.rollback()
+        raise ConflictError(
+            "Ошибка целостности бд при обновлении TestCase (возможно, имя уже занято)"
+        ) from ie
+
+    return tc

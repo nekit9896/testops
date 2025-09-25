@@ -163,7 +163,7 @@ docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image
 curl -X POST 'http://localhost:5000/upload' -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\0477e9be-9f9a-4301-9792-784ae94c08bb-result.json"      -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\3383fa62-dce1-4ac2-abc6-ead40f3f4b7a-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\11327270-8aab-4d37-81b4-6488855be7f4-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\a66c33e6-bb8c-4fa2-b268-0d47342c76a3-result.json" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\b33d1db4-fc93-460f-925e-e4e1535b0c9e-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\ba852533-61b6-45f4-ae51-483aaedb8871-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\d3c09ae1-4f16-400b-a70e-abfb701ea0de-container.json" -v
 ```
 ```bash
-export LANG=en_US.UTF-8  # делаем локаль UTF-8 в текущей сессии (рекомендовано)
+export LANG=en_US.UTF-8
 cat > payload.json <<'JSON'
 {
   "name": "Созданный через curl тест-кейс",
@@ -186,6 +186,27 @@ curl -v -i -X POST 'http://localhost:5000/test_cases' \
 ```bash
 curl -i -X GET "http://localhost:5000/test_cases/<id>"
 ```
+Обновление тест кейса PUT
+```bash
+curl -i -X PUT "http://localhost:5000/test_cases/6" \   -H "Content-Type: application/json"   --data '{
+    "name": "Обновлённый тест-кейс через curl",
+    "preconditions": "Новое Авторизация: пользователь залогинен",
+    "description": "Обновлённое описание",
+    "expected_result": "Ожидаемый результат обновлён",
+    "steps": [
+      {"position": 1, "action": "Новое", "expected": "Новое открылось"},
+      {"position": 2, "action": "Новое текст", "expected": "Текст введён"}
+    ],
+    "tags": [
+      "smoke",
+      {"name":"regression"}
+    ],
+    "suite_links": [
+      {"suite_name": "API Suite", "position": 1}
+    ]
+  }'
+```
+
 
 ### POST /test_cases — Создание тест-кейса
 

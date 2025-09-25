@@ -15,7 +15,8 @@ from helpers.testcase_helpers import (ConflictError, NotFoundError,
                                       create_test_case_from_payload,
                                       get_test_case_by_id,
                                       get_test_cases_cursored,
-                                      parse_bool_param, serialize_test_case)
+                                      parse_bool_param, serialize_test_case,
+                                      update_test_case_from_payload)
 from logger import init_logger
 
 bp = Blueprint("routes", __name__)
@@ -367,3 +368,52 @@ def get_test_case(test_case_id: int):
     # Сериализуем и возвращаем
     body = serialize_test_case(tc)
     return jsonify(body)
+
+
+@bp.route("/test_cases/<int:test_case_id>", methods=["PUT"])
+def update_test_case(test_case_id: int):
+    """
+    PUT /test_cases/<id>
+
+    Полный апдейт TestCase. Ожидается JSON-представление (такие же поля, как для POST/create).
+    Семантика: полный replace — клиент отправляет желаемое состояние.
+
+    Ответы:
+      - 200 OK + JSON (обновлённый объект) — при успехе
+      - 400 Bad Request — ошибка валидации payload
+      - 404 Not Found — тест-кейс не найден или помечен как удалённый
+      - 409 Conflict — конфликт целостности (например дублирующееся имя)
+      - 500 Internal Server Error — ошибки БД / прочие ошибки
+    """
+    payload = request.get_json(silent=True)
+    if not payload:
+        logger.error("update_test_case: пустой или некорректный JSON")
+        abort(400, description="Invalid or missing JSON body")
+
+    try:
+        updated_tc = update_test_case_from_payload(test_case_id, payload)
+
+    except ValidationError as ve:
+        logger.warning("Ошибки валидации при обновлении TestCase", exc_info=ve)
+        abort(400, description=str(ve))
+
+    except NotFoundError as ne:
+        logger.info("TestCase не найден при попытке обновления", exc_info=ne)
+        abort(404, description=str(ne))
+
+    except ConflictError as ce:
+        logger.warning("Конфликт при обновлении TestCase", exc_info=ce)
+        abort(409, description=str(ce))
+
+    except DatabaseError as dbe:
+        db.session.rollback()
+        logger.exception("Ошибка БД при обновлении TestCase", exc_info=dbe)
+        abort(500, description="Database error")
+
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("Непредвиденная ошибка при обновлении TestCase", exc_info=e)
+        abort(500, description="Unexpected error")
+
+    body = serialize_test_case(updated_tc)
+    return jsonify(body), 200
