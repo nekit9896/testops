@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import base64
 import json
-import traceback
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
@@ -640,56 +639,48 @@ def get_test_case_by_id(
 @contextmanager
 def _transaction_context():
     """
-    Контекст-менеджер транзакции с диагностикой.
-    - Пытаемся обычный begin(), если уже есть транзакция — begin_nested().
-    - Логируем bind.url и текущий pg backend pid (если возможно), stack при активной сессии.
+    Контекст-менеджер транзакции.
+    - Если сессия уже в транзакции -> используем begin_nested() (SAVEPOINT).
+    - Иначе -> обычный db.session.begin().
+    Важно: НЕ делать никаких вызовов, которые проверяют/открывают соединение
+    до входа в этот контекст (например db.session.get_bind(), db.session.connection()
+    или любые SELECT), т.к. они вызовут implicit BEGIN.
     """
-
-    # Проверим, кажется ли сессия уже в транзакции
-    try:
-        in_tx = bool(getattr(db.session, "in_transaction", lambda: False)())
-    except Exception:
-        in_tx = getattr(db.session, "transaction", None) is not None
     logger = __import__("logger").init_logger()
-    logger.info(f"_transaction_context: before begin: session.in_transaction={in_tx}")
 
-    if in_tx:
-        stack = "".join(traceback.format_stack(limit=10))
-        logger.warning(
-            "_transaction_context: session already in transaction BEFORE begin(). "
-            "This often means some earlier code opened a transaction and didn't close it. "
-            f"Stack (top):\n{stack}"
-        )
-
-    # Попытка открыть обычную транзакцию, иначе nested (savepoint)
+    # Определяем, кажется ли сессия уже в транзакции (без побочных эффектов).
     try:
-        tx_ctx = db.session.begin()
+        session_in_transaction = bool(
+            getattr(db.session, "in_transaction", lambda: False)()
+        )
+    except Exception:
+        session_in_transaction = getattr(db.session, "transaction", None) is not None
+
+    logger.debug(
+        f"_transaction_context: session_in_transaction={session_in_transaction}"
+    )
+
+    # аккуратно вычисляем, кажется ли сессия в транзакции
+    try:
+        in_transaction_flag = bool(
+            getattr(db.session, "in_transaction", lambda: False)()
+        )
+    except Exception:
+        in_transaction_flag = getattr(db.session, "transaction", None) is not None
+
+    # Открываем нормальную транзакцию или nested (savepoint) в зависимости от состояния.
+    try:
+        transaction_context_manager = db.session.begin()
         used = "begin"
     except InvalidRequestError:
-        tx_ctx = db.session.begin_nested()
+        transaction_context_manager = db.session.begin_nested()
         used = "begin_nested"
-        logger.info("_transaction_context: using begin_nested (savepoint)")
 
-    # Попробуем залогировать на какой bind/engine мы работаем и pg backend pid
+    logger.debug(
+        f"_transaction_context: entering ({used}), in_transaction={in_transaction_flag}"
+    )
     try:
-        bind = db.session.get_bind()
-        # bind may be Engine or Connection
-        logger.info(f"_transaction_context: bind = {getattr(bind, 'url', repr(bind))}")
-        # попытка получить backend pid (Postgres-specific)
-        try:
-            conn = db.session.connection()
-            res = conn.execute("SELECT pg_backend_pid()").scalar()
-            logger.info(f"_transaction_context: pg_backend_pid = {res}")
-        except Exception:
-            logger.debug(
-                "_transaction_context: cannot determine pg_backend_pid (non-postgres or no connection)"
-            )
-    except Exception:
-        logger.exception("_transaction_context: failed to log bind/connection")
-
-    logger.debug(f"_transaction_context: entering ({used})")
-    try:
-        with tx_ctx:
+        with transaction_context_manager:
             yield
     finally:
         logger.debug(f"_transaction_context: exit ({used})")
@@ -721,23 +712,13 @@ def update_test_case_from_payload(
     if not isinstance(test_case_id, int) or test_case_id <= 0:
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
-    # Нормализуем и валидируем входной payload как для create (PUT требует полного описания)
     normalized = _validate_basic_fields(payload)
     logger = __import__("logger").init_logger()
-    try:
-        engine_url = getattr(db.engine, "url", None)
-        logger.info(f"update_test_case_from_payload: db.engine.url = {engine_url}")
-        # также log bind (на случай множественных binds)
-        logger.info(
-            f"update_test_case_from_payload: session.bind = {db.session.get_bind()!r}"
-        )
-    except Exception:
-        logger.exception("update_test_case_from_payload: failed to log engine/bind")
 
     try:
-        # Контекст-менеджер гарантирует commit/rollback
+        # Контекст-менеджер гарантирует commit/rollback. Входим в транзакцию прежде, чем делать SELECT/UPDATE/INSERT
         with _transaction_context():
-            # Получаем текущий объект
+            # Получаем текущий объект внутри транзакции (важное изменение)
             tc = TestCase.query.options(
                 joinedload(TestCase.steps),
                 joinedload(TestCase.tags),
@@ -746,15 +727,6 @@ def update_test_case_from_payload(
 
             if not tc or tc.is_deleted:
                 raise NotFoundError(f"TestCase with id={test_case_id} not found")
-            logger = __import__("logger").init_logger()
-            now = datetime.now(timezone.utc)
-
-            # Обновляем простые поля
-            tc.name = normalized["name"]
-            tc.preconditions = normalized.get("preconditions")
-            tc.description = normalized.get("description")
-            tc.expected_result = normalized.get("expected_result")
-            tc.updated_at = now
 
             # -----------------------
             # Обновляем теги (replace)
@@ -767,7 +739,6 @@ def update_test_case_from_payload(
                     continue
                 tag_obj = _get_or_create_tag(tag_norm)
                 if tag_obj is None:
-                    # Если указан id и тега нет — логируем и пропускаем.
                     logger.warning(
                         f"При обновлении TestCase id={test_case_id}: "
                         f"указанный тег id={tag_norm.get('id')} не найден — пропускаем"
@@ -788,7 +759,7 @@ def update_test_case_from_payload(
             tc.steps[:] = []
 
             # 2) Явно делаем flush, чтобы DELETE были отправлены в БД до INSERT новых строк.
-            # Это критично, иначе в некоторых случаях автосброс (autoflush) может привести
+            # Это оказалось критично, иначе в некоторых случаях автосброс (autoflush) может привести
             # к попытке вставки новых шагов до удаления старых -> UniqueViolation.
             db.session.flush()
 
@@ -833,7 +804,6 @@ def update_test_case_from_payload(
                     )
                     continue
                 if suite_obj.id in suite_ids_seen:
-                    # избегаем дубликатов связей
                     continue
                 suite_ids_seen.add(suite_obj.id)
                 link = TestCaseSuite(
@@ -841,9 +811,20 @@ def update_test_case_from_payload(
                 )
                 tc.suite_links.append(link)
 
+            now = datetime.now(timezone.utc)
+
+            # Обновляем простые поля
+            tc.name = normalized["name"]
+            tc.preconditions = normalized.get("preconditions")
+            tc.description = normalized.get("description")
+            tc.expected_result = normalized.get("expected_result")
+            tc.updated_at = now
+
             # Финальный flush и refresh
             db.session.flush()
             db.session.refresh(tc)
+
+            return tc
 
     except IntegrityError as ie:
         # Откат транзакции и информативное исключение для роутера
@@ -851,5 +832,3 @@ def update_test_case_from_payload(
         raise ConflictError(
             "Ошибка целостности бд при обновлении TestCase (возможно, имя уже занято)"
         ) from ie
-
-    return tc

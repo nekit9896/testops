@@ -27,6 +27,7 @@ def create_app():
     # При инициализации указываете папки с html и css в корне проекта
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.from_object(Config)
+    app.config["SQLALCHEMY_ECHO"] = True
 
     # Инициализирует логер
     logger = init_logger()
