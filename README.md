@@ -188,7 +188,7 @@ curl -i -X GET "http://localhost:5000/test_cases/<id>"
 ```
 Обновление тест кейса PUT
 ```bash
-curl -i -X PUT "http://localhost:5000/test_cases/6" \   -H "Content-Type: application/json"   --data '{
+curl -i -X PUT "http://localhost:5000/test_cases/<id>" \   -H "Content-Type: application/json"   --data '{
     "name": "Обновлённый тест-кейс через curl",
     "preconditions": "Новое Авторизация: пользователь залогинен",
     "description": "Обновлённое описание",
@@ -206,7 +206,10 @@ curl -i -X PUT "http://localhost:5000/test_cases/6" \   -H "Content-Type: applic
     ]
   }'
 ```
-
+Удаление тест кейса
+```bash
+curl -i -X DELETE "http://localhost:5000/test_cases/<id>"
+```
 
 ### POST /test_cases — Создание тест-кейса
 

@@ -832,3 +832,54 @@ def update_test_case_from_payload(
         raise ConflictError(
             "Ошибка целостности бд при обновлении TestCase (возможно, имя уже занято)"
         ) from ie
+
+
+def soft_delete_test_case(test_case_id: int) -> TestCase:
+    """
+    Soft-delete TestCase: пометить запись как удалённую, не удаляя дочерние записи
+    (steps, suite_links, tags) — чтобы при возможном восстановлении они автоматически
+    вернулись и на фронте.
+
+    Поведение:
+      - Если тест-кейс не найден -> NotFoundError.
+      - Идемпотентно: если уже is_deleted -> возвращаем объект.
+      - В транзакции: помечаем tc.is_deleted=True, tc.deleted_at и tc.updated_at.
+      - Flush + refresh и возвращаем tc.
+    """
+    if not isinstance(test_case_id, int) or test_case_id <= 0:
+        raise ValidationError("test_case_id должен быть положительным целым числом")
+
+    logger = __import__("logger").init_logger()
+
+    try:
+        with _transaction_context():
+            # Загружаем объект внутри транзакции
+            tc = TestCase.query.options(
+                joinedload(TestCase.steps),
+                joinedload(TestCase.tags),
+                joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+            ).get(test_case_id)
+
+            if not tc:
+                raise NotFoundError(f"TestCase with id={test_case_id} not found")
+
+            if tc.is_deleted:
+                # Идемпотентно — уже удалён
+                return tc
+
+            now = datetime.now(timezone.utc)
+
+            # Просто помечаем тест-кейс как удалённый
+            tc.is_deleted = True
+            tc.deleted_at = now
+            tc.updated_at = now
+
+            db.session.flush()
+            db.session.refresh(tc)
+
+    except IntegrityError as ie:
+        db.session.rollback()
+        logger.exception("IntegrityError при soft-delete TestCase", exc_info=ie)
+        raise ConflictError("Ошибка целостности бд при удалении TestCase") from ie
+
+    return tc

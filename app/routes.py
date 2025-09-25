@@ -16,6 +16,7 @@ from helpers.testcase_helpers import (ConflictError, NotFoundError,
                                       get_test_case_by_id,
                                       get_test_cases_cursored,
                                       parse_bool_param, serialize_test_case,
+                                      soft_delete_test_case,
                                       update_test_case_from_payload)
 from logger import init_logger
 
@@ -417,3 +418,42 @@ def update_test_case(test_case_id: int):
 
     body = serialize_test_case(updated_tc)
     return jsonify(body), 200
+
+
+@bp.route("/test_cases/<int:test_case_id>", methods=["DELETE"])
+def delete_test_case(test_case_id: int):
+    """
+    DELETE /test_cases/<id> — мягкое удаление (soft delete).
+    Возвращает:
+      - 204 No Content — удалено успешно
+      - 404 Not Found — если TestCase не найден или уже удалён
+      - 409 Conflict — ошибка целостности БД
+      - 500 — прочие ошибки
+    """
+    try:
+        soft_delete_test_case(test_case_id)
+
+    except ValidationError as ve:
+        logger.warning("delete_test_case: ошибка валидации", exc_info=ve)
+        abort(400, description=str(ve))
+
+    except NotFoundError as ne:
+        logger.info("delete_test_case: TestCase не найден", exc_info=ne)
+        abort(404, description=str(ne))
+
+    except ConflictError as ce:
+        logger.warning("delete_test_case: конфликт при удалении", exc_info=ce)
+        abort(409, description=str(ce))
+
+    except DatabaseError as dbe:
+        db.session.rollback()
+        logger.exception("delete_test_case: ошибка БД", exc_info=dbe)
+        abort(500, description="Database error")
+
+    except Exception as e:
+        db.session.rollback()
+        logger.exception("delete_test_case: непредвиденная ошибка", exc_info=e)
+        abort(500, description="Unexpected error")
+
+    # Успешно: ничего не возвращаем
+    return "", 204
