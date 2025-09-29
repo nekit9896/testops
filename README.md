@@ -1,8 +1,5 @@
 # Testops
 
-
-
-
 ## Методы и их описание
 
 /upload - метод загрузки результатов прогона автотеста:
@@ -30,6 +27,92 @@ app = create_app()
 with app.app_context():
     print(sorted(db.metadata.tables.keys()))
 PY
+```
+
+## Быстродокер
+```bash
+docker build -t nekit9896/testops-flask-app:v1.0.18 -f Dockerfile .
+docker push nekit9896/testops-flask-app:v1.0.18
+docker exec -it testops-flask-app bash
+
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image nekit9896/system-dependencies:v0.1
+```
+
+
+## Примеры запросов
+```bash
+curl -X POST 'http://localhost:5000/upload' -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\0477e9be-9f9a-4301-9792-784ae94c08bb-result.json"      -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\3383fa62-dce1-4ac2-abc6-ead40f3f4b7a-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\11327270-8aab-4d37-81b4-6488855be7f4-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\a66c33e6-bb8c-4fa2-b268-0d47342c76a3-result.json" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\b33d1db4-fc93-460f-925e-e4e1535b0c9e-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\ba852533-61b6-45f4-ae51-483aaedb8871-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\d3c09ae1-4f16-400b-a70e-abfb701ea0de-container.json" -v
+```
+```bash
+export LANG=en_US.UTF-8
+cat > payload.json <<'JSON'
+{
+  "name": "Созданный через curl тест-кейс",
+  "preconditions": "Авторизация: пользователь залогинен",
+  "description": "Пошаговая проверка входа и создания записи",
+  "expected_result": "Запись создаётся, данные отображаются в списке",
+  "steps": [
+    {"position": 1, "action": "Открыть поле ввода", "expected": "Поле ввода открылось"},
+    {"position": 2, "action": "Ввести текст и отправить", "expected": "Текст введен и отправлен"},
+    {"action": "Заполнить форму и отправить", "expected": "Появилось подтверждение", "attachments": "screenshot-1.png"}
+  ],
+  "tags": ["smoke", {"name": "regression"}],
+  "suite_links": [{"suite_name": "API Suite", "position": 2}]
+}
+JSON
+curl -v -i -X POST 'http://localhost:5000/test_cases' \
+  -H 'Content-Type: application/json; charset=utf-8' \
+  --data-binary @payload.json
+```
+```bash
+curl -i -X GET "http://localhost:5000/test_cases/<id>"
+```
+Обновление тест кейса PUT
+```bash
+curl -i -X PUT "http://localhost:5000/test_cases/<id>" \   -H "Content-Type: application/json"   --data '{
+    "name": "Обновлённый тест-кейс через curl",
+    "preconditions": "Новое Авторизация: пользователь залогинен",
+    "description": "Обновлённое описание",
+    "expected_result": "Ожидаемый результат обновлён",
+    "steps": [
+      {"position": 1, "action": "Новое", "expected": "Новое открылось"},
+      {"position": 2, "action": "Новое текст", "expected": "Текст введён"}
+    ],
+    "tags": [
+      "smoke",
+      {"name":"regression"}
+    ],
+    "suite_links": [
+      {"suite_name": "API Suite", "position": 1}
+    ]
+  }'
+```
+Удаление тест кейса
+```bash
+curl -i -X DELETE "http://localhost:5000/test_cases/<id>"
+```
+
+Сохранение вложений:
+```bash
+curl -i -X POST "http://localhost:5000/test_cases/<id>/attachments" \
+  -F "file=@path/to/file" \
+  -H "Accept: application/json"
+```
+Получение списка вложений:
+```bash
+curl -i "http://localhost:5000/test_cases/<id>/attachments"
+```
+Скачать файл из MinIO 
+```bash
+curl -L -O -J "http://localhost:5000/test_cases/<id>/attachments/<id_attachment>?download=1"
+```
+Получить полную информацию по вложению
+```bash
+curl -s "http://localhost:5000/test_cases/<id>/attachments/<id_attachment>"
+```
+Удалить attachment:
+```bash
+curl -i -X DELETE "http://localhost:5000/test_cases/<id>/attachments/<id_attachment>"
 ```
 
 
@@ -145,71 +228,6 @@ PY
 
 ---
 
-
-
-
-## Быстродокер
-```bash
-docker build -t nekit9896/testops-flask-app:v1.0.18 -f Dockerfile .
-docker push nekit9896/testops-flask-app:v1.0.18
-docker exec -it testops-flask-app bash
-
-docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy image nekit9896/system-dependencies:v0.1
-```
-
-
-## Примеры запросов
-```bash
-curl -X POST 'http://localhost:5000/upload' -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\0477e9be-9f9a-4301-9792-784ae94c08bb-result.json"      -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\3383fa62-dce1-4ac2-abc6-ead40f3f4b7a-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\11327270-8aab-4d37-81b4-6488855be7f4-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\a66c33e6-bb8c-4fa2-b268-0d47342c76a3-result.json" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\b33d1db4-fc93-460f-925e-e4e1535b0c9e-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\ba852533-61b6-45f4-ae51-483aaedb8871-attachment.txt" -F "files=@C:\Users\nekit\PycharmProjects\test_pets\allure-results\d3c09ae1-4f16-400b-a70e-abfb701ea0de-container.json" -v
-```
-```bash
-export LANG=en_US.UTF-8
-cat > payload.json <<'JSON'
-{
-  "name": "Созданный через curl тест-кейс",
-  "preconditions": "Авторизация: пользователь залогинен",
-  "description": "Пошаговая проверка входа и создания записи",
-  "expected_result": "Запись создаётся, данные отображаются в списке",
-  "steps": [
-    {"position": 1, "action": "Открыть поле ввода", "expected": "Поле ввода открылось"},
-    {"position": 2, "action": "Ввести текст и отправить", "expected": "Текст введен и отправлен"},
-    {"action": "Заполнить форму и отправить", "expected": "Появилось подтверждение", "attachments": "screenshot-1.png"}
-  ],
-  "tags": ["smoke", {"name": "regression"}],
-  "suite_links": [{"suite_name": "API Suite", "position": 2}]
-}
-JSON
-curl -v -i -X POST 'http://localhost:5000/test_cases' \
-  -H 'Content-Type: application/json; charset=utf-8' \
-  --data-binary @payload.json
-```
-```bash
-curl -i -X GET "http://localhost:5000/test_cases/<id>"
-```
-Обновление тест кейса PUT
-```bash
-curl -i -X PUT "http://localhost:5000/test_cases/<id>" \   -H "Content-Type: application/json"   --data '{
-    "name": "Обновлённый тест-кейс через curl",
-    "preconditions": "Новое Авторизация: пользователь залогинен",
-    "description": "Обновлённое описание",
-    "expected_result": "Ожидаемый результат обновлён",
-    "steps": [
-      {"position": 1, "action": "Новое", "expected": "Новое открылось"},
-      {"position": 2, "action": "Новое текст", "expected": "Текст введён"}
-    ],
-    "tags": [
-      "smoke",
-      {"name":"regression"}
-    ],
-    "suite_links": [
-      {"suite_name": "API Suite", "position": 1}
-    ]
-  }'
-```
-Удаление тест кейса
-```bash
-curl -i -X DELETE "http://localhost:5000/test_cases/<id>"
-```
 
 ### POST /test_cases — Создание тест-кейса
 

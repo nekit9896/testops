@@ -1,7 +1,11 @@
-from sqlalchemy import (Boolean, Column, DateTime, ForeignKey, Index, Integer,
-                        String, Table, Text, UniqueConstraint, func)
+import uuid
+
+from sqlalchemy import (BigInteger, Boolean, Column, DateTime, ForeignKey,
+                        Index, Integer, String, Table, Text, UniqueConstraint,
+                        func)
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import backref, relationship
+from werkzeug.utils import secure_filename
 
 from . import db
 
@@ -67,6 +71,42 @@ class TestCaseSuite(db.Model):
         return f"<TestCaseSuite tc={self.test_case_id} suite={self.suite_id} pos={self.position}>"
 
 
+class Attachment(db.Model):
+    __tablename__ = "attachments"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    test_case_id = Column(
+        Integer,
+        ForeignKey("test_cases.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    original_filename = Column(String(1024), nullable=False)
+    object_name = Column(String(2048), nullable=False, unique=True)  # ключ в MinIO
+    bucket = Column(String(255), nullable=False)
+    content_type = Column(String(255), nullable=True)
+    size = Column(BigInteger, nullable=True)
+    created_at = Column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    test_case = relationship(
+        "TestCase", back_populates="attachments", passive_deletes=True
+    )
+
+    def __repr__(self):
+        return f"<Attachment {self.id} {self.original_filename}>"
+
+    @staticmethod
+    def make_object_name(test_case_id: int, filename: str) -> str:
+        """
+        Генерирует уникальное имя объекта для хранения в MinIO.
+        Формат: testcases/<test_case_id>/<uuid4hex>_<secure_filename>
+        """
+        safe = secure_filename(filename) or "file"
+        return f"testcases/{test_case_id}/{uuid.uuid4().hex}_{safe}"
+
+
 class TestCase(db.Model):
     __tablename__ = "test_cases"
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -104,6 +144,15 @@ class TestCase(db.Model):
         "Tag",
         secondary=test_case_tags,
         back_populates="test_cases",
+        passive_deletes=True,
+    )
+
+    # attached files
+    attachments = relationship(
+        "Attachment",
+        back_populates="test_case",
+        order_by="Attachment.created_at",
+        cascade="all, delete-orphan",
         passive_deletes=True,
     )
 

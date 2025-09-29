@@ -14,6 +14,7 @@ LOG_FILE_NAME = "logs.json"
 # MinIO
 ALLURE_RESULTS_BUCKET_NAME = "allure-results-bucket"
 ALLURE_REPORTS_BUCKET_NAME = "allure-reports-bucket"
+ATTACHMENTS_BUCKET = "testcase-files-bucket"
 
 # Front
 TEMPLATE_INDEX = "index.html"

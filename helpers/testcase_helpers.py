@@ -6,13 +6,18 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+from flask import current_app
 from sqlalchemy import and_, asc, desc, or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import joinedload
 
 from app import db
-from app.models import Tag, TestCase, TestCaseStep, TestCaseSuite, TestSuite
+from app.clients import MinioClient
+from app.models import (Attachment, Tag, TestCase, TestCaseStep, TestCaseSuite,
+                        TestSuite)
 from constants import ASCII_CODING, ENCODING, TESTCASE_PER_PAGE_LIMIT
+
+minio_client = MinioClient()
 
 
 # -------------------------------
@@ -873,6 +878,25 @@ def soft_delete_test_case(test_case_id: int) -> TestCase:
             tc.is_deleted = True
             tc.deleted_at = now
             tc.updated_at = now
+
+            attachments = Attachment.query.filter_by(test_case_id=tc.id).all()
+            for attachment in attachments:
+                try:
+                    minio_client.remove_object(
+                        attachment.bucket, attachment.object_name
+                    )
+                except Exception:
+                    current_app.logger.exception(
+                        "Не удалось удалить вложение из minio для test_case %s attachment %s",
+                        tc.id,
+                        attachment.id,
+                    )
+                    raise
+
+            # Удаляем метаданные
+            Attachment.query.filter_by(test_case_id=tc.id).delete(
+                synchronize_session=False
+            )
 
             db.session.flush()
             db.session.refresh(tc)
