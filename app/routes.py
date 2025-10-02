@@ -122,6 +122,16 @@ def upload_results():
         logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
         abort(500, description="Некоторые файлы не были успешно обработаны")
 
+    # Шаг 6. Сразу генерируем allure-report и сохраняем в MinIO
+    testrun = TestResult.query.get(new_result.id)
+
+    # Проверка на существование и статус TestResult
+    if not testrun or testrun.is_deleted:
+        testrun_helpers.log_and_abort(new_result.id, testrun)
+
+    run_name = testrun.run_name
+    testrun_helpers.get_or_generate_report(run_name)
+
     response = jsonify({"run_id": new_result.id, "message": "Файлы успешно загружены"})
     response_code = 201
     logger.info("Файлы успешно загружены", status_code=response_code)
