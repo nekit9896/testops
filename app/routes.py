@@ -8,8 +8,13 @@ from werkzeug.routing import BuildError
 import constants as const
 from app import db
 from app.clients import MinioClient
-from app.models import TestResult
+from app.models import Attachment, TestCase, TestResult
 from helpers import testrun_helpers
+from helpers.testcase_attachment_helpers import (
+    create_attachment_record_and_commit, delete_attachment_by_object,
+    list_archives_for_test_case, list_attachments_for_test_case,
+    make_content_disposition, serialize_attachment,
+    stream_attachment_generator, upload_attachment_stream)
 from helpers.testcase_helpers import (ConflictError, NotFoundError,
                                       ValidationError,
                                       create_test_case_from_payload,
@@ -116,6 +121,16 @@ def upload_results():
     if error_files:
         logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
         abort(500, description="Некоторые файлы не были успешно обработаны")
+
+    # Шаг 6. Сразу генерируем allure-report и сохраняем в MinIO
+    testrun = TestResult.query.get(new_result.id)
+
+    # Проверка на существование и статус TestResult
+    if not testrun or testrun.is_deleted:
+        testrun_helpers.log_and_abort(new_result.id, testrun)
+
+    run_name = testrun.run_name
+    testrun_helpers.get_or_generate_report(run_name)
 
     response = jsonify({"run_id": new_result.id, "message": "Файлы успешно загружены"})
     response_code = 201
@@ -456,4 +471,161 @@ def delete_test_case(test_case_id: int):
         abort(500, description="Unexpected error")
 
     # Успешно: ничего не возвращаем
+    return "", 204
+
+
+@bp.route("/test_cases/<int:test_case_id>/attachments", methods=["POST"])
+def upload_test_case_attachment(test_case_id: int):
+    """
+    Загрузка одного файла в тест-кейс (multipart/form-data, field name 'file').
+    Возвращает 201 + JSON (метаданные attachment).
+    """
+    if "file" not in request.files:
+        abort(400, description="Файл обязателен")
+
+    file_storage = request.files["file"]
+    if not file_storage or file_storage.filename == "":
+        abort(400, description="Файл обязателен")
+
+    # проверим, что тест-кейс существует и не удалён
+    tc = TestCase.query.get(test_case_id)
+    if not tc or tc.is_deleted:
+        abort(404, description="TestCase не найден")
+
+    # bucket по константе
+    bucket = getattr(
+        __import__("constants"),
+        "TESTCASE_ATTACHMENTS_BUCKET_NAME",
+        "testcase-attachments",
+    )
+
+    try:
+        object_name, size = upload_attachment_stream(test_case_id, file_storage, bucket)
+    except Exception:
+        logger.exception(
+            "upload_test_case_attachment: upload failed",
+            test_case_id=test_case_id,
+            filename=file_storage.filename,
+        )
+        abort(500, description="Storage upload failed")
+
+    content_type = getattr(file_storage, "mimetype", None)
+    try:
+        attachment = create_attachment_record_and_commit(
+            test_case_id, file_storage.filename, object_name, bucket, content_type, size
+        )
+    except Exception:
+        logger.exception(
+            "upload_test_case_attachment: Ошибка базы данных при создании вложения",
+            test_case_id=test_case_id,
+            object_name=object_name,
+        )
+        abort(500, description="Ошибка базы данных при создании вложения")
+
+    body = serialize_attachment(attachment)
+    return jsonify(body), 201
+
+
+@bp.route("/test_cases/<int:test_case_id>/attachments", methods=["GET"])
+def list_test_case_attachments(test_case_id: int):
+    tc = TestCase.query.get(test_case_id)
+    if not tc:
+        abort(404, description="TestCase не найден")
+
+    items = list_attachments_for_test_case(test_case_id)
+    return jsonify({"items": items}), 200
+
+
+@bp.route(
+    "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>", methods=["GET"]
+)
+def get_test_case_attachment(test_case_id: int, attachment_id: int):
+    """
+    Если ?download=1 — проксируем (stream) файл из MinIO, выставляя Content-Disposition (filename + filename*).
+    Иначе возвращаем метаданные.
+    """
+    attachment = Attachment.query.get(attachment_id)
+    if not attachment or attachment.test_case_id != test_case_id:
+        abort(404, description="Вложение не найдено")
+
+    download_mode = request.args.get("download")
+    if download_mode in ("1", "true", "True"):
+        # stream через сервер
+        try:
+            stream_generator = stream_attachment_generator(attachment)
+        except Exception:
+            logger.exception(
+                "get_test_case_attachment: ошибка чтения хранилища",
+                attachment_id=attachment_id,
+                test_case_id=test_case_id,
+            )
+            abort(500, description="ошибка чтения хранилища")
+
+        filename = (
+            attachment.original_filename or attachment.object_name or "attachment"
+        )
+        cd_value = make_content_disposition(
+            filename
+        )  # можно вызвать локально или inline
+        headers = {"Content-Disposition": cd_value}
+        if attachment.size:
+            headers["Content-Length"] = str(int(attachment.size))
+
+        return Response(
+            stream_generator,
+            content_type=attachment.content_type or "application/octet-stream",
+            headers=headers,
+            direct_passthrough=True,
+        )
+
+    # non-download -> метаданные
+    body = {
+        "id": attachment.id,
+        "original_filename": attachment.original_filename,
+        "object_name": attachment.object_name,
+        "bucket": attachment.bucket,
+        "content_type": attachment.content_type,
+        "size": int(attachment.size) if attachment.size is not None else None,
+        "created_at": (
+            attachment.created_at.isoformat() if attachment.created_at else None
+        ),
+        "download_path": f"/test_cases/{test_case_id}/attachments/{attachment.id}?download=1",
+    }
+    return jsonify(body), 200
+
+
+@bp.route("/test_cases/<int:test_case_id>/attachments/archives", methods=["GET"])
+def get_archives_for_test_case(test_case_id: int):
+    tc = TestCase.query.get(test_case_id)
+    if not tc:
+        abort(404, description="TestCase не найден")
+
+    items = list_archives_for_test_case(test_case_id)
+    return jsonify({"items": items}), 200
+
+
+@bp.route(
+    "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>", methods=["DELETE"]
+)
+def delete_test_case_attachment(test_case_id: int, attachment_id: int):
+    attachment = Attachment.query.get(attachment_id)
+    if not attachment or attachment.test_case_id != test_case_id:
+        abort(404, description="Вложение не найдено")
+
+    try:
+        delete_attachment_by_object(attachment)
+    except Exception:
+        db.session.rollback()
+        logger.exception(
+            "delete_test_case_attachment: не удалось удалить объект или удалить запись в базе данных",
+            attachment_id=attachment_id,
+            test_case_id=test_case_id,
+        )
+        abort(500, description="Не удалось удалить вложение.")
+
+    logger.info(
+        "delete_test_case_attachment: удалено",
+        attachment_id=attachment_id,
+        test_case_id=test_case_id,
+    )
     return "", 204
