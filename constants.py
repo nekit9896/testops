@@ -22,6 +22,7 @@ TEMPLATE_REPORTS = "reports.html"
 HTML_403 = "errors/403.html"
 HTML_404 = "errors/404.html"
 HTML_500 = "errors/500.html"
+ALLOWED_OVERRIDE_METHODS = {"PUT", "DELETE", "PATCH"}
 
 # PostgreSQL
 TEMP_TEST_STATUS = "success"

@@ -72,8 +72,12 @@ class MinioClient:
 
         # Переопределение kwargs / обработка алиасов
         bucket_name = kwargs.get("bucket_name", bucket_name)
-        object_name = kwargs.get("object_name", object_name) or kwargs.get("file_path", object_name)
-        file_stream = kwargs.get("file_stream", file_stream) or kwargs.get("data", file_stream)
+        object_name = kwargs.get("object_name", object_name) or kwargs.get(
+            "file_path", object_name
+        )
+        file_stream = kwargs.get("file_stream", file_stream) or kwargs.get(
+            "data", file_stream
+        )
         # content_length может быть в kwargs под разными именами
         if content_length is None:
             content_length = kwargs.get("content_length", kwargs.get("length"))
@@ -81,7 +85,9 @@ class MinioClient:
         content_type = kwargs.get("content_type", None)
 
         if not bucket_name or not object_name or file_stream is None:
-            raise ValueError("put_object: обязательные параметры (bucket_name, object_name, file_stream) не обнаружены")
+            raise ValueError(
+                "put_object: обязательные параметры (bucket_name, object_name, file_stream) не обнаружены"
+            )
 
         tmp_file_path: Optional[str] = None
         used_stream = file_stream
@@ -111,7 +117,7 @@ class MinioClient:
                         try:
                             file_stream.seek(0, os.SEEK_END)
                             end_pos = file_stream.tell()
-                            # если удалось, размер = end_pos (если предыдущая позиция не нулевая, это абсолютная позиция)
+                            # если удалось, размер=end_pos (если предыдущая позиция не нулевая, это абсолютная позиция)
                             content_length = int(end_pos)
                             # вернёмся к началу для загрузки
                             try:
@@ -129,7 +135,9 @@ class MinioClient:
             # Если всё ещё нет размера — fallback: пишем поток во временный файл и используем его
             if content_length is None:
                 # создаём tmp файл и копируем туда поток
-                tmp_fd, tmp_file_path = tempfile.mkstemp(prefix="minio_put_", suffix=".tmp")
+                tmp_fd, tmp_file_path = tempfile.mkstemp(
+                    prefix="minio_put_", suffix=".tmp"
+                )
                 os.close(tmp_fd)
                 total = 0
                 try:
@@ -156,7 +164,10 @@ class MinioClient:
                         try:
                             os.unlink(tmp_file_path)
                         except Exception:
-                            logger.exception("put_object: не удалось удалить tmp после ошибки", tmp_path=tmp_file_path)
+                            logger.exception(
+                                "put_object: не удалось удалить tmp после ошибки",
+                                tmp_path=tmp_file_path,
+                            )
                     raise
 
                 # откроем tmp для чтения в бинарном режиме и используем его как stream
@@ -167,8 +178,11 @@ class MinioClient:
                 used_stream.seek(0)
             except Exception:
                 # если не получается промотать — логируем, но попытаемся загрузить
-                logger.debug("put_object: не удалось найти начало потока, продолжаем",
-                             bucket_name=bucket_name, object_name=object_name)
+                logger.debug(
+                    "put_object: не удалось найти начало потока, продолжаем",
+                    bucket_name=bucket_name,
+                    object_name=object_name,
+                )
 
             # Подготовим kwargs для minio SDK — content_type добавляем только если есть
             put_kwargs = {"length": content_length}
@@ -176,11 +190,20 @@ class MinioClient:
                 put_kwargs["content_type"] = content_type
 
             # Наконец, вызов SDK
-            self.minio_client.put_object(bucket_name, object_name, used_stream, **put_kwargs)
-            logger.info("put_object: uploaded", bucket=bucket_name, object=object_name, length=content_length)
+            self.minio_client.put_object(
+                bucket_name, object_name, used_stream, **put_kwargs
+            )
+            logger.info(
+                "put_object: uploaded",
+                bucket=bucket_name,
+                object=object_name,
+                length=content_length,
+            )
 
         except Exception:
-            logger.exception("put_object failed", bucket=bucket_name, object=object_name)
+            logger.exception(
+                "put_object failed", bucket=bucket_name, object=object_name
+            )
             raise
 
         finally:
@@ -189,14 +212,20 @@ class MinioClient:
                 if tmp_file_path and used_stream and not used_stream.closed:
                     used_stream.close()
             except Exception:
-                logger.debug("put_object: не удалось закрыть временный поток", tmp_path=tmp_file_path)
+                logger.debug(
+                    "put_object: не удалось закрыть временный поток",
+                    tmp_path=tmp_file_path,
+                )
 
             # если создали tmp — удалим его
             if tmp_file_path:
                 try:
                     os.unlink(tmp_file_path)
                 except Exception:
-                    logger.exception("put_object: не удалось удалить файл tmp", tmp_path=tmp_file_path)
+                    logger.exception(
+                        "put_object: не удалось удалить файл tmp",
+                        tmp_path=tmp_file_path,
+                    )
 
             # Восстановим позицию исходного потока, если возможно и если у нас бывает смысл
             try:
@@ -204,9 +233,13 @@ class MinioClient:
                     try:
                         file_stream.seek(restored_position)
                     except Exception:
-                        logger.debug("put_object: не удалось восстановить исходную позицию потока")
+                        logger.debug(
+                            "put_object: не удалось восстановить исходную позицию потока"
+                        )
             except Exception:
-                logger.debug("put_object: логика восстановления исходной позиции не удалась")
+                logger.debug(
+                    "put_object: логика восстановления исходной позиции не удалась"
+                )
 
     def list_objects(self, bucket_name, prefix):
         """Возвращает объекты, подходящие под префикс."""
