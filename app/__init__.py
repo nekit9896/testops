@@ -27,7 +27,7 @@ def create_app():
     # При инициализации указываете папки с html и css в корне проекта
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.from_object(Config)
-    app.config["SQLALCHEMY_ECHO"] = True
+    # app.config["SQLALCHEMY_ECHO"] = True
 
     # Инициализирует логер
     logger = init_logger()
@@ -38,6 +38,11 @@ def create_app():
         Логирует каждый запрос
         """
         logger.info("Выполнение запроса")
+
+    # Инициализация method-override (поддержка _method)
+    from .method_override import init_method_override
+
+    init_method_override(app)
 
     # Инициализация баз данных
     db.init_app(app)

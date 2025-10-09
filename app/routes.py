@@ -1,13 +1,14 @@
 from typing import List, Optional
 
-from flask import (Blueprint, Response, abort, jsonify, render_template,
-                   request, url_for)
+from flask import (Blueprint, Response, abort, jsonify, redirect,
+                   render_template, request, url_for)
 from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
 
 import constants as const
 from app import db
 from app.clients import MinioClient
+from app.method_override import payload_from_form_or_json
 from app.models import Attachment, TestCase, TestResult
 from helpers import testrun_helpers
 from helpers.testcase_attachment_helpers import (
@@ -236,7 +237,7 @@ def create_test_case():
     - мапит доменные исключения на HTTP-коды,
     - возвращает 201 с Location и телом созданного ресурса.
     """
-    payload = request.get_json(silent=True)
+    payload = payload_from_form_or_json()
     if not payload:
         logger.error("create_test_case: пустой или некорректный JSON")
         abort(400, description="Invalid or missing JSON body")
@@ -285,8 +286,10 @@ def create_test_case():
         # Если детального роутa ещё нет — используем fallback путь
         location = f"/test_cases/{tc.id}"
 
-    response = jsonify(body)
-    return response, 201, {"Location": location}
+    # Если клиент принимает html — редирект на страницу тест кейсов с выбранным кейсом
+    if request.accept_mimetypes.accept_html:
+        return redirect(url_for("routes.test_cases_page", selected_id=tc.id))
+    return jsonify(body), 201, {"Location": location}
 
 
 @bp.route("/test_cases", methods=["GET"])
@@ -386,7 +389,7 @@ def get_test_case(test_case_id: int):
     return jsonify(body)
 
 
-@bp.route("/test_cases/<int:test_case_id>", methods=["PUT"])
+@bp.route("/test_cases/<int:test_case_id>", methods=["PUT", "POST"])
 def update_test_case(test_case_id: int):
     """
     PUT /test_cases/<id>
@@ -401,7 +404,12 @@ def update_test_case(test_case_id: int):
       - 409 Conflict — конфликт целостности (например дублирующееся имя)
       - 500 Internal Server Error — ошибки БД / прочие ошибки
     """
-    payload = request.get_json(silent=True)
+
+    if request.is_json:
+        payload = request.get_json(silent=True)
+    else:
+        payload = payload_from_form_or_json()
+
     if not payload:
         logger.error("update_test_case: пустой или некорректный JSON")
         abort(400, description="Invalid or missing JSON body")
@@ -432,6 +440,9 @@ def update_test_case(test_case_id: int):
         abort(500, description="Unexpected error")
 
     body = serialize_test_case(updated_tc)
+    if request.accept_mimetypes.accept_html:
+        # редирект обратно на страницу с выбранным кейсом
+        return redirect(url_for("routes.test_cases_page", selected_id=test_case_id))
     return jsonify(body), 200
 
 
@@ -470,7 +481,9 @@ def delete_test_case(test_case_id: int):
         logger.exception("delete_test_case: непредвиденная ошибка", exc_info=e)
         abort(500, description="Unexpected error")
 
-    # Успешно: ничего не возвращаем
+    # Успешно: ничего не возвращаем, редиректим на станицу с тест кейсами
+    if request.accept_mimetypes.accept_html:
+        return redirect(url_for("routes.test_cases_page"))
     return "", 204
 
 
@@ -523,7 +536,11 @@ def upload_test_case_attachment(test_case_id: int):
         abort(500, description="Ошибка базы данных при создании вложения")
 
     body = serialize_attachment(attachment)
-    return jsonify(body), 201
+    if request.accept_mimetypes.accept_html:
+        # редирект обратно на страницу где selected_case открыт
+        return redirect(url_for("routes.test_cases_page", selected_id=test_case_id))
+    else:
+        return jsonify(body), 201
 
 
 @bp.route("/test_cases/<int:test_case_id>/attachments", methods=["GET"])
@@ -628,4 +645,73 @@ def delete_test_case_attachment(test_case_id: int, attachment_id: int):
         attachment_id=attachment_id,
         test_case_id=test_case_id,
     )
+    if request.accept_mimetypes.accept_html:
+        # редирект обратно на страницу тест кейса, чтобы фронт обновился
+        return redirect(url_for("routes.test_cases_page", selected_id=test_case_id))
     return "", 204
+
+
+@bp.route("/testcases", methods=["GET"])
+def test_cases_page():
+    # Параметры фильтра/страницы
+    q = request.args.get("q")
+    suite_id = request.args.get("suite_id")
+    sort = request.args.get("sort", "-created_at")
+    cursor = request.args.get("cursor")
+    include_deleted = parse_bool_param(request.args.get("include_deleted"))
+
+    # получить кейсы (через существующий helper)
+    try:
+        # get_test_cases_cursored ожидает suite_ids либо None
+        suite_ids = None
+        if suite_id:
+            try:
+                suite_ids = [int(suite_id)]
+            except Exception:
+                suite_ids = None
+
+        items, meta = get_test_cases_cursored(
+            q=q,
+            tags=None,
+            suite_ids=suite_ids,
+            suite_name=None,
+            limit=request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT),
+            cursor=cursor,
+            sort=sort,
+            include_deleted=bool(include_deleted),
+        )
+    except Exception:
+        items = []
+        meta = {}
+
+    # подготовка suites (список для левого сайдбара)
+    try:
+        from app.models import TestSuite
+
+        suites = (
+            TestSuite.query.filter_by(is_deleted=False).order_by(TestSuite.name).all()
+        )
+    except Exception:
+        suites = []
+
+    # selected_case (если нужно показать подробности)
+    selected_case = None
+    selected_id = request.args.get("selected_id")
+    if selected_id:
+        try:
+            selected_case = get_test_case_by_id(
+                int(selected_id), include_deleted=bool(include_deleted)
+            )
+        except Exception:
+            selected_case = None
+
+    create_flag = request.args.get("create") in ("1", "true", "True")
+
+    return render_template(
+        "test_cases.html",
+        cases=items,
+        meta=meta,
+        suites=suites,
+        selected_case=selected_case,
+        create=create_flag,
+    )

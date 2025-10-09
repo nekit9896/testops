@@ -2,30 +2,37 @@
 <html lang="ru">
 
 <head>
-    <!-- Здесь указываем ссылку на CSS -->
-    <link href="{{ url_for('static', filename='css/tailwind.min.css') }}" rel="stylesheet">
-    {% block head %}{% endblock %}
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <link href="{{ url_for('static', filename='css/tailwind.min.css') }}" rel="stylesheet">
+  {% block head %}{% endblock %}
 </head>
 
-<body class="flex h-screen bg-gray-100">
-    <!-- Навигационная панель -->
-    <nav class="w-64 bg-gray-800 text-white p-5">
-        <div class="text-lg font-semibold mb-8">
-            <a href="/">testops</a>
+<body class="min-h-screen bg-gray-100 antialiased text-gray-900">
+
+  <!-- HEADER -->
+  <header class="w-full bg-gray-800 border-b">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+      <div class="flex items-center justify-between h-16">
+        <!-- Левый: логотип / название -->
+        <div class="flex items-center gap-4">
+          <a href="{{ url_for('routes.home') }}" class="text-xl font-semibold text-white hover:text-gray-200">TestOps</a>
+
+          <!-- Навигация (видна на >= sm) -->
+          <nav class="hidden sm:flex items-center gap-2">
+            <a href="{{ url_for('routes.test_cases_page') }}" class="px-3 py-1 rounded text-sm font-medium text-white hover:bg-blue-500">Тест кейсы</a>
+            <a href="{{ url_for('routes.get_reports') }}" class="px-3 py-1 rounded text-sm font-medium text-white hover:bg-blue-500">Отчёты</a>
+          </nav>
         </div>
+      </div>
+    </div>
+  </header>
 
-        <ul>
-            <!-- Кнопки -->
-            <li>
-                <a href="/reports" class="mt-5 block w-full bg-blue-500 p-2 rounded text-center text-white">
-                    Список отчётов
-                </a>
-            </li>
-        </ul>
-    </nav>
-
-    <!-- Этот блок будет изменяться на других страницах -->
+  <!-- MAIN CONTENT -->
+  <main class="{% block main_container_class %}max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6{% endblock %}">
     {% block main %}{% endblock %}
+  </main>
+
 </body>
 
 </html>
