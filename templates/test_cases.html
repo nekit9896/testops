@@ -33,7 +33,7 @@
           <ul class="space-y-1 text-xs">
             <li>
               <a href="{{ url_for('routes.test_cases_page') }}"
-                 class="block px-2 py-1 rounded {% if not request.args.get('suite_id') %}bg-blue-50 text-base text-blue-700{% else %}hover:bg-gray-100{% endif %}">
+                 class="block px-2 py-1 rounded {% if not request.args.get('suite_id') %}bg-blue-50 text-sm text-blue-700{% else %}hover:bg-gray-100{% endif %}">
                 Все сьюты
               </a>
             </li>
@@ -42,7 +42,7 @@
               {% for s in suites %}
                 <li>
                   <a href="{{ url_for('routes.test_cases_page') }}?suite_id={{ s.id }}"
-                     class="block px-2 py-1 rounded {% if request.args.get('suite_id') == s.id|string %}bg-blue-50 text-base text-blue-700{% else %}hover:bg-gray-100{% endif %}">
+                     class="block px-2 py-1 rounded {% if request.args.get('suite_id') == s.id|string %}bg-blue-50 text-sm text-blue-700{% else %}hover:bg-gray-100{% endif %}">
                     {{ s.name }}
                   </a>
                 </li>
@@ -151,19 +151,19 @@
 
             <div class="mb-3">
               <label class="block font-medium">Предусловие</label>
-              <textarea name="preconditions" class="w-full border rounded px-3 py-2" rows="1"></textarea>
+              <textarea name="preconditions" class="w-full border rounded px-3 py-2" rows="3"></textarea>
             </div>
 
             <div class="mb-3">
               <label class="block font-medium">Описание</label>
-              <textarea name="description" class="w-full border rounded px-3 py-2" rows="2"></textarea>
+              <textarea name="description" class="w-full border rounded px-3 py-2" rows="4"></textarea>
             </div>
 
             <div class="mb-3">
               <label class="block font-medium mb-2">Шаги</label>
               <div id="steps-create" class="space-y-2">
                 <div class="flex gap-2 items-start">
-                  <div class="text-sm text-gray-600 pt-2">#1</div>
+                  <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#1</div>
                   <input type="text" name="steps[0][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
                   <input type="text" name="steps[0][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
                 </div>
@@ -186,17 +186,55 @@
           <script>
             (function(){
               let idx = 1;
+
+              function makeStepHtml(i){
+                return `<div class="flex gap-2 items-start" data-step-index="${i}">
+                          <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${i+1}</div>
+                          <input type="text" name="steps[${i}][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
+                          <input type="text" name="steps[${i}][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
+                          <button type="button" class="px-3 py-1 bg-green-500 text-white rounded" onclick="insertCreateStepAt(${i}+1)">+</button>
+                          <button type="button" class="px-3 py-1 bg-red-500 text-white rounded" onclick="this.parentElement.remove()">−</button>
+                        </div>`;
+              }
+
               window.addCreateStep = function(){
                 const container = document.getElementById('steps-create');
-                const div = document.createElement('div');
-                div.className = 'flex gap-2 items-start';
-                div.innerHTML = `<div class="text-sm text-gray-600 pt-2">#${idx+1}</div>
-                  <input type="text" name="steps[${idx}][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
-                  <input type="text" name="steps[${idx}][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
-                  <button type="button" onclick="this.parentElement.remove()" class="px-2 py-1 bg-red-500 text-white rounded">−</button>`;
-                container.appendChild(div);
+                container.insertAdjacentHTML('beforeend', makeStepHtml(idx));
                 idx++;
+                // update indices of following rows (so names are continuous) — naive approach: reindex all
+                reindexCreateSteps();
               };
+
+              window.insertCreateStepAt = function(pos){
+                const container = document.getElementById('steps-create');
+                const node = document.createElement('div');
+                node.innerHTML = makeStepHtml(idx);
+                // insert before child at pos
+                const children = container.children;
+                if (pos >= children.length) container.appendChild(node.firstElementChild);
+                else container.insertBefore(node.firstElementChild, children[pos]);
+                idx++;
+                reindexCreateSteps();
+              };
+
+              function reindexCreateSteps(){
+                const container = document.getElementById('steps-create');
+                Array.from(container.children).forEach((child, i) => {
+                  child.setAttribute('data-step-index', i);
+                  // rename inputs
+                  const action = child.querySelector('input[name^="steps"][name$="[action]"]') || child.querySelector('input:nth-of-type(1)');
+                  const expected = child.querySelector('input[name^="steps"][name$="[expected]"]') || child.querySelector('input:nth-of-type(2)');
+                  if(action) action.name = `steps[${i}][action]`;
+                  if(expected) expected.name = `steps[${i}][expected]`;
+                  // update step number
+                  const num = child.querySelector('.w-8');
+                  if(num) num.textContent = `#${i+1}`;
+                });
+                // set idx to next index
+                idx = container.children.length;
+              }
+
+              // expose helpers to global scope (already attached)
             })();
           </script>
 
@@ -204,14 +242,10 @@
           <!-- EDIT / VIEW -->
 
           <form method="post" action="{{ url_for('routes.update_test_case', test_case_id=selected_case.id) }}">
-            <input type="hidden" name="_method" value="PUT">
 
-            <div class="mb-2">
-              <div class="text-sm text-gray-500">ID {{ selected_case.id }}</div>
-            </div>
-
-            <div class="mb-3">
-              <input type="text" name="name" value="{{ selected_case.name }}" class="w-full border rounded px-4 py-3 text-lg font-bold" required>
+            <div class="mb-3 flex items-center gap-3">
+              <div class="text-sm text-gray-500 flex-none">ID {{ selected_case.id }}</div>
+              <input type="text" name="name" value="{{ selected_case.name }}" class="flex-1 border rounded px-3 py-2 text-lg font-bold" required>
             </div>
 
             <div class="mb-3 flex space-x-4">
@@ -221,8 +255,7 @@
                 <textarea name="tags"
                           rows="1"
                           class="w-full border rounded px-2 py-1 text-sm resize-y overflow-auto break-words"
-                          placeholder="regression, smoke"
-                          oninput="this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px';">{% for tt in selected_case.tags %}{% if tt.name is defined %}{{ tt.name }}{% else %}{{ tt }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
+                          placeholder="regression, smoke">{% for tt in selected_case.tags %}{% if tt.name is defined %}{{ tt.name }}{% else %}{{ tt }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
               </div>
 
               <!-- Suites -->
@@ -232,48 +265,136 @@
                           rows="1"
                           class="w-full border rounded px-2 py-1 text-sm resize-y overflow-auto break-words"
                           placeholder="Suite A, Suite B"
-                          oninput="this.style.height = 'auto'; this.style.height = (this.scrollHeight) + 'px';">{% for ss in selected_case.suites %}{% if ss.name is defined %}{{ ss.name }}{% else %}{{ ss }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
+                          >{% for ss in selected_case.suites %}{% if ss.name is defined %}{{ ss.name }}{% else %}{{ ss }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
               </div>
             </div>
 
             <div class="mb-3">
               <label class="block font-medium">Предусловие</label>
-              <textarea name="preconditions" class="w-full border rounded px-3 py-2" rows="1">{{ selected_case.preconditions }}</textarea>
+
+              {% set txt = selected_case.preconditions | default('') %}
+              {% set total = txt | length %}
+              {% set nlines = txt.splitlines() | length %}
+              {# меньшая ширина — используем меньше символов на строку #}
+              {% set chars_per_row = 80 %}
+              {% set est = ((total + chars_per_row - 1) // chars_per_row) %}
+              {% set rows_calc = [ (nlines if nlines > 0 else 1), est ] | max %}
+              {% set rows = [ rows_calc, 15 ] | min %}
+
+              <textarea
+                name="preconditions"
+                class="w-full border rounded px-3 py-2"
+                rows="{{ rows }}"
+                style="resize:vertical; overflow:auto;"
+              >{{ selected_case.preconditions }}</textarea>
             </div>
+
 
             <div class="mb-3">
               <label class="block font-medium">Описание</label>
-              <textarea name="description" class="w-full border rounded px-3 py-2" rows="2">{{ selected_case.description }}</textarea>
+
+              {# --- server-side estimate of rows (approx visual wrapping) --- #}
+              {% set txt = selected_case.description | default('') %}
+              {% set total = txt | length %}
+              {% set nlines = txt.splitlines() | length %}
+              {# пример: 100 символов в строке — подберите под ваш макет (см. примечание) #}
+              {% set chars_per_row = 100 %}
+              {% set est = ((total + chars_per_row - 1) // chars_per_row) %}
+              {% set rows_calc = [ (nlines if nlines > 0 else 1), est ] | max %}
+              {% set rows = [ rows_calc, 40 ] | min %}
+
+              <textarea
+                name="description"
+                class="w-full border rounded px-3 py-2"
+                rows="{{ rows }}"
+                style="resize:vertical; overflow:auto;"
+              >{{ selected_case.description }}</textarea>
             </div>
 
             <div class="mb-3">
-              <h4 class="font-semibold mb-2">Шаги</h4>
+              <div class="flex items-center justify-between mb-2">
+                <h4 class="font-semibold">Шаги</h4>
+                <!-- кнопка добавления шага, видимая всегда -->
+                <button type="button" id="btn-add-step-top" class="px-2 py-1 bg-green-500 text-white text-sm rounded">+ Шаг</button>
+              </div>
               <div id="steps-edit" class="space-y-3">
                 {% for s in selected_case.steps %}
                   <div class="border rounded p-2">
-                    <div class="text-sm text-gray-600 mb-1">#{{ s.position if s.position is not none else loop.index }}</div>
                     <div class="flex gap-2 items-start">
-                      <input type="text" name="steps[{{ loop.index0 }}][action]" value="{{ s.action }}" class="flex-1 border rounded text-sm px-2 py-1" placeholder="Action">
-                      <input type="text" name="steps[{{ loop.index0 }}][expected]" value="{{ s.expected }}" class="flex-1 border rounded text-sm px-2 py-1" placeholder="Expected">
-                      <button type="button" onclick="this.parentElement.parentElement.remove()" class="px-2 py-1 bg-red-500 text-white rounded">−</button>
+
+                      <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#{{ s.position if s.position is not none else loop.index }}</div>
+
+                      {# --- ACTION textarea autosize estimate --- #}
+                      {% set act_txt = (s.action | default('')) %}
+                      {% set act_total = act_txt | length %}
+                      {% set act_nlines = act_txt.splitlines() | length %}
+                      {% set act_chars_per_row = 80 %}
+                      {% set act_est = ((act_total + act_chars_per_row - 1) // act_chars_per_row) %}
+                      {% set act_rows_calc = [ (act_nlines if act_nlines > 0 else 1), act_est ] | max %}
+                      {% set act_rows = [ act_rows_calc, 10 ] | min %}
+
+                      <textarea name="steps[{{ loop.index0 }}][action]" placeholder="Action"
+                                class="flex-1 border rounded text-sm px-2 py-1"
+                                rows="{{ act_rows }}">{{ s.action }}</textarea>
+
+                      {# --- EXPECTED textarea autosize estimate --- #}
+                      {% set exp_txt = (s.expected | default('')) %}
+                      {% set exp_total = exp_txt | length %}
+                      {% set exp_nlines = exp_txt.splitlines() | length %}
+                      {% set exp_chars_per_row = 80 %}
+                      {% set exp_est = ((exp_total + exp_chars_per_row - 1) // exp_chars_per_row) %}
+                      {% set exp_rows_calc = [ (exp_nlines if exp_nlines > 0 else 1), exp_est ] | max %}
+                      {% set exp_rows = [ exp_rows_calc, 10 ] | min %}
+
+                      <textarea name="steps[{{ loop.index0 }}][expected]" placeholder="Expected"
+                                class="flex-1 border rounded text-sm px-2 py-1"
+                                rows="{{ exp_rows }}">{{ s.expected }}</textarea>
+
+                      {# Если сервер просит подтверждение удаления для этого шага, показываем prompt вместо обычных кнопок #}
+                      {% if confirm_delete_step is defined and confirm_delete_step == loop.index0 %}
+                        <div class="flex flex-col gap-1">
+                          <div class="text-sm text-red-600">Подтвердите удаление шага #{{ loop.index }}</div>
+                          <div class="flex gap-1">
+                            <button type="submit" name="confirm_delete_step" value="{{ loop.index0 }}" class="px-2 py-1 bg-red-600 text-white rounded text-sm">Удалить</button>
+                            <button type="submit" name="cancel_confirm" value="1" class="px-2 py-1 bg-gray-200 rounded text-sm">Отмена</button>
+                          </div>
+                        </div>
+                      {% else %}
+                        {# Кнопка вставки перед текущим шагом (сервер выполнит insert) #}
+                        <button type="button" class="px-3 py-1 bg-green-500 text-white rounded btn-insert-step" data-insert-index="{{ loop.index0 }}">+</button>
+
+                        {# Кнопка удаления — отправляет запрос на подтверждение #}
+                        <button type="button" class="px-3 py-1 bg-red-500 text-white rounded btn-delete-step" data-delete-index="{{ loop.index0 }}">−</button>
+                      {% endif %}
+
                     </div>
                   </div>
                 {% endfor %}
               </div>
 
-              <div class="mt-2">
-                <button type="button" onclick="addEditStep()" class="px-2 py-1 bg-green-500 text-white text-sm rounded">+ Шаг</button>
-              </div>
-
               <div class="mb-3">
               <label class="block font-medium">Ожидаемый результат</label>
-              <textarea name="expected_result" class="w-full border rounded px-3 py-2" rows="2">{{ selected_case.expected_result }}</textarea>
+
+              {% set txt = selected_case.expected_result | default('') %}
+              {% set total = txt | length %}
+              {% set nlines = txt.splitlines() | length %}
+              {% set chars_per_row = 100 %}
+              {% set est = ((total + chars_per_row - 1) // chars_per_row) %}
+              {% set rows_calc = [ (nlines if nlines > 0 else 1), est ] | max %}
+              {% set rows = [ rows_calc, 40 ] | min %}
+
+              <textarea
+                name="expected_result"
+                class="w-full border rounded px-3 py-2"
+                rows="{{ rows }}"
+                style="resize:vertical; overflow:auto;"
+              >{{ selected_case.expected_result }}</textarea>
               </div>
             </div>
 
             <!-- Дополнительная информация -->
             <div class="mb-3">
-              <div class="text-sm text-gray-500">
+              <div class="text-xs text-gray-500">
                 Created: {% if selected_case.created_at %}{{ selected_case.created_at.strftime('%Y-%m-%d %H:%M:%S') }}{% endif %}
                 {% if selected_case.updated_at %}
                   <br>Updated: {{ selected_case.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}
@@ -284,10 +405,14 @@
             <div class="mt-4 flex justify-between">
               <button type="submit" class="px-3 py-1 bg-blue-500 text-white rounded">Сохранить изменения</button>
 
-              <form action="{{ url_for('routes.get_test_case', test_case_id=selected_case.id) }}" method="post">
-                <input type="hidden" name="_method" value="DELETE">
-                <button type="submit" class="px-3 py-1 bg-red-500 text-white rounded">Удалить</button>
-              </form>
+              <button
+                type="submit"
+                formaction="{{ url_for('routes.get_test_case', test_case_id=selected_case.id) }}"
+                formmethod="post"
+                name="_method"
+                value="DELETE"
+                class="px-3 py-1 bg-red-500 text-white rounded"
+                data-confirm="Удалить тест-кейс?">Удалить тест-кейс</button>
             </div>
           </form>
 
@@ -298,12 +423,12 @@
                 const container = document.getElementById('steps-edit');
                 const div = document.createElement('div');
                 div.className = 'border rounded p-2';
-                div.innerHTML = `<div class="text-sm text-gray-600 mb-1">#${editIndex + 1}</div>
-                  <div class="flex gap-2 items-start">
-                    <input type="text" name="steps[${editIndex}][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
-                    <input type="text" name="steps[${editIndex}][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
-                    <button type="button" onclick="this.parentElement.parentElement.remove()" class="px-2 py-1 bg-red-500 text-white rounded">−</button>
-                  </div>`;
+                div.innerHTML = `<div class="flex gap-2 items-start">
+                  <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${editIndex + 1}</div>
+                  <input type="text" name="steps[${editIndex}][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
+                  <input type="text" name="steps[${editIndex}][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
+                  <button type="button" onclick="this.parentElement.parentElement.remove()" class="px-2 py-1 bg-red-500 text-white rounded">−</button>
+                </div>`;
                 container.appendChild(div);
                 editIndex++;
               };
@@ -334,7 +459,7 @@
 
                     <form action="{{ url_for('routes.get_test_case_attachment', test_case_id=selected_case.id, attachment_id=a.id) }}" method="post">
                       <input type="hidden" name="_method" value="DELETE">
-                      <button type="submit" class="px-2 py-1 bg-red-500 text-white rounded text-xs">Delete</button>
+                      <button type="submit" class="px-2 py-1 bg-red-500 text-white rounded text-xs" data-confirm="Удалить вложение?">Delete</button>
                     </form>
                   </div>
                 </div>
@@ -349,5 +474,102 @@
 
     </div>
   </div>
+  <script>
+  document.addEventListener('DOMContentLoaded', function(){
+
+    const container = document.getElementById('steps-edit');
+    if(!container) return;
+
+    function createStepNode(idx, action='', expected=''){
+      const wrapper = document.createElement('div');
+      wrapper.className = 'border rounded p-2';
+      wrapper.innerHTML = `<div class="flex gap-2 items-start">
+        <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${idx+1}</div>
+        <textarea name="steps[${idx}][action]" placeholder="Action" class="flex-1 border rounded text-sm px-2 py-1" rows="1">${action || ''}</textarea>
+        <textarea name="steps[${idx}][expected]" placeholder="Expected" class="flex-1 border rounded text-sm px-2 py-1" rows="1">${expected || ''}</textarea>
+        <button type="button" class="px-3 py-1 bg-green-500 text-white rounded btn-insert-step" data-insert-index="${idx}">+</button>
+        <button type="button" class="px-3 py-1 bg-red-500 text-white rounded btn-delete-step" data-delete-index="${idx}">−</button>
+      </div>`;
+      return wrapper;
+    }
+
+    function reindexSteps(){
+      Array.from(container.children).forEach((child, i) => {
+        const num = child.querySelector('.w-8');
+        if(num) num.textContent = `#${i+1}`;
+
+        const action = child.querySelector('textarea[name$="[action]"], input[name$="[action]"]');
+        const expected = child.querySelector('textarea[name$="[expected]"], input[name$="[expected]"]');
+        if(action) action.name = `steps[${i}][action]`;
+        if(expected) expected.name = `steps[${i}][expected]`;
+
+        const ins = child.querySelector('.btn-insert-step');
+        const del = child.querySelector('.btn-delete-step');
+        if(ins) ins.dataset.insertIndex = i;
+        if(del) del.dataset.deleteIndex = i;
+      });
+
+      // синхронизируем глобальный индекс (если где-то используется)
+      window.editIndex = container.children.length;
+    }
+
+    // кнопка в заголовке — добавляет шаг в конец (если список пуст, появится первый элемент)
+    const topAddBtn = document.getElementById('btn-add-step-top');
+    if(topAddBtn){
+      topAddBtn.addEventListener('click', function(){
+        const children = container.children;
+        const pos = children.length; // вставляем в конец
+        const newNode = createStepNode(pos);
+        container.appendChild(newNode);
+        reindexSteps();
+        // если у вас были focus/scroll-заметки — можно поставить фокус в action:
+        const last = container.children[container.children.length - 1];
+        const actionField = last.querySelector('textarea[name$="[action]"], input[name$="[action]"]');
+        if(actionField) actionField.focus();
+      });
+    }
+
+    // delegation: insert / delete buttons
+    container.addEventListener('click', function(ev){
+      const ins = ev.target.closest('.btn-insert-step');
+      if(ins){
+        const idx = Number(ins.dataset.insertIndex);
+        const pos = idx + 1; // вставляем *после* текущего шага
+        const newNode = createStepNode(idx); // индекс временный, реиндексация потом поправит имена
+        const children = container.children;
+        if(pos >= children.length) container.appendChild(newNode);
+        else container.insertBefore(newNode, children[pos]);
+        reindexSteps();
+        return;
+      }
+
+      const del = ev.target.closest('.btn-delete-step');
+      if(del){
+        const idx = Number(del.dataset.deleteIndex);
+        if(!confirm(`Удалить шаг #${idx+1}?`)) return;
+        const child = container.children[idx];
+        if(child) child.remove();
+        reindexSteps();
+        return;
+      }
+    });
+
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest('button[data-confirm]');
+    if(!btn) return;
+
+    // если кнопка не внутри формы — просто показать confirm и если отмена — ничего не делать
+    const msg = btn.dataset.confirm || 'Подтвердите действие';
+    if(!confirm(msg)){
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return false;
+    }
+    // иначе — позволяем кнопке продолжить (отправить форму)
+    // ничего дополнительно не делаем здесь
+  }, true); // use capture=true чтобы перехватить до submit-обработчиков
+  });
+  </script>
+
 </main>
 {% endblock %}
