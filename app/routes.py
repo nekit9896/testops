@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from flask import (Blueprint, Response, abort, jsonify, redirect,
+from flask import (Blueprint, Response, abort, flash, jsonify, redirect,
                    render_template, request, url_for)
 from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
@@ -261,8 +261,21 @@ def create_test_case():
         abort(404, description=str(ne))
 
     except ConflictError as ce:
-        # Конфликт целостности (например уникальное имя) -> 409 Conflict
         logger.warning("Конфликт при создании TestCase", exc_info=ce)
+        # Если клиент ожидает HTML — попробуем flash+redirect, но защитимся от отсутствия session/secret_key
+        if request.accept_mimetypes.accept_html:
+            try:
+                flash("Название тест-кейса должно быть уникальным", "error")
+                return redirect(url_for("routes.test_cases_page"))
+            except RuntimeError:
+                logger.warning(
+                    "Сессия недоступна flashing сообщения. Возвращаем 409.",
+                    exc_info=True,
+                )
+                # fallback — отдаём обычный 409, обработчик ошибок вернёт страницу/JSON
+                abort(409, description=str(ce))
+
+        # Для API/JSON клиентов — обычный 409
         abort(409, description=str(ce))
 
     except DatabaseError as dbe:

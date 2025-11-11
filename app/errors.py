@@ -1,4 +1,5 @@
 from flask import Blueprint, jsonify, render_template, request
+from jinja2 import TemplateNotFound
 from werkzeug.exceptions import HTTPException
 
 from constants import HTML_CONTENT_TYPE, JSON_CONTENT_TYPE
@@ -12,52 +13,67 @@ logger = init_logger()
 def check_is_request_api() -> bool:
     """
     Проверяет тип запроса.
+    Возвращает True если это, скорее всего, API/JSON запрос.
+    Дополнительно учитываем request.is_json.
     """
-    return (
-        request.accept_mimetypes.best_match([JSON_CONTENT_TYPE, HTML_CONTENT_TYPE])
-        == JSON_CONTENT_TYPE
-    )
+    # если клиент явно прислал JSON body
+    if request.is_json:
+        return True
+
+    # Преференции Accept: если json предпочтительнее html
+    best = request.accept_mimetypes.best_match([JSON_CONTENT_TYPE, HTML_CONTENT_TYPE])
+    return best == JSON_CONTENT_TYPE
 
 
 def format_json_error_response(error: HTTPException) -> dict:
     """
-    Форматирует ошибки для JSON-ответа.
+    Форматирует ошибки для JSON-ответа
     """
-    return {
-        "status_code": error.code,
-        "name": error.name,
-        "description": error.description,
-    }
-
-
-def render_error_html_template(status_code: int) -> str:
-    """
-    Получает путь к HTML-шаблону ошибок и рендерит его.
-    """
-    return render_template(f"errors/{status_code}.html")
+    # защитимся если поля отсутствуют
+    code = getattr(error, "code", 500)
+    name = getattr(error, "name", "Internal Server Error")
+    description = getattr(error, "description", str(error))
+    return {"status_code": code, "name": name, "description": description}
 
 
 @errors_bp.app_errorhandler(HTTPException)
 def exception_handler(error):
     """
-    Универсальный обработчик http ошибок
+    Универсальный обработчик http ошибок.
+    Для API -> JSON.
+    Для браузера -> пытаемся specific -> generic -> 500 -> JSON.
     """
+    code = getattr(error, "code", 500)
+    name = getattr(error, "name", "Internal Server Error")
+    description = getattr(error, "description", str(error))
+
     logger.error(
         "http-exception",
-        status_code=error.code or "UNKNOWN",
-        name=error.name,
-        description=error.description,
+        status_code=code or "UNKNOWN",
+        name=name,
+        description=description,
         method=request.method,
         url=request.url,
     )
-    # Проверяет наличие кода ошибки
-    if error.code:
-        # Если тип запроса API то в ответе будет json
-        if check_is_request_api():
-            response = format_json_error_response(error)
-            return jsonify(response), error.code
 
-        return render_error_html_template(error.code), error.code
-    else:
-        # Возвращает неизвестную ошибку обратно, для дефолтного обработчика
-        return error
+    json_body = {"status_code": code, "name": name, "description": description}
+
+    # Если это API — сразу JSON
+    if check_is_request_api():
+        return jsonify(json_body), code
+
+    try:
+        return (
+            render_template(
+                "errors/generic.html", code=code, name=name, description=description
+            ),
+            code,
+        )
+    except TemplateNotFound:
+        logger.debug("Generic error template errors/generic.html not found")
+
+    # в крайнем случае — JSON fallback
+    logger.warning(
+        "No HTML error template found; returning JSON fallback for status %s", code
+    )
+    return jsonify(json_body), code
