@@ -87,7 +87,7 @@
                 <th class="p-2 text-left">Tags</th>
               </tr>
             </thead>
-            <tbody>
+            <tbody id="cases-tbody">
               {% for tc in cases %}
                 <tr class="border-t hover:bg-gray-50">
                   <td class="p-2">{{ tc.id }}</td>
@@ -114,16 +114,16 @@
         </div>
 
         <!-- Пагинация -->
-        <div class="mt-3 flex items-center justify-between text-sm text-gray-600">
+        <div class="mt-3 flex items-center justify-between text-sm text-gray-600" id="pagination">
           <div>
             {% if meta.prev_cursor %}
-              <a href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.prev_cursor }}" class="px-2 py-1 border rounded">Prev</a>
+              <a id="prev-link" href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.prev_cursor }}" class="px-2 py-1 border rounded">Prev</a>
             {% endif %}
             {% if meta.next_cursor %}
-              <a href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.next_cursor }}" class="px-2 py-1 border rounded ml-2">Next</a>
+              <a id="next-link" href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.next_cursor }}" class="px-2 py-1 border rounded ml-2">Next</a>
             {% endif %}
           </div>
-          <div>{{ meta.count if meta and meta.count else '' }}</div>
+          <div id="meta-count">{{ meta.count if meta and meta.count else '' }}</div>
         </div>
       </section>
 
@@ -131,6 +131,17 @@
       <aside class="w-full lg:w-1/2 bg-white border rounded p-4 shadow-sm overflow-auto">
         {% if create %}
           <!-- CREATE form -->
+          {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+              <div class="mb-4">
+                {% for category, msg in messages %}
+                  <div class="p-3 rounded {{ 'bg-red-100 text-red-800' if category == 'error' else 'bg-green-100 text-green-800' }}">
+                    {{ msg }}
+                  </div>
+                {% endfor %}
+              </div>
+            {% endif %}
+          {% endwith %}
           <h3 class="text-xl font-semibold mb-3">Создать тест-кейс</h3>
 
           <form method="post" action="{{ url_for('routes.create_test_case') }}">
@@ -570,6 +581,86 @@
   }, true); // use capture=true чтобы перехватить до submit-обработчиков
   });
   </script>
+  <script>
+  document.addEventListener('DOMContentLoaded', function () {
+    const nextLink = document.getElementById('next-link');
+    const tbody = document.getElementById('cases-tbody');
+    const metaCountEl = document.getElementById('meta-count');
+    const pagination = document.getElementById('pagination');
 
+    if (!nextLink || !tbody) return;
+
+    let loading = false;
+
+    // простой спиннер текстом
+    const spinner = document.createElement('span');
+    spinner.id = 'next-spinner';
+    spinner.textContent = ' Загрузка...';
+    spinner.className = 'text-gray-600';
+
+    nextLink.addEventListener('click', async function (ev) {
+      // важно: НЕ passive — чтобы preventDefault работал
+      ev.preventDefault();
+      ev.stopPropagation();
+      if (loading) return;
+      loading = true;
+
+      // показать спиннер рядом с кнопкой
+      nextLink.parentElement.appendChild(spinner);
+
+      try {
+        const res = await fetch(nextLink.href, { credentials: 'same-origin' });
+        if (!res.ok) throw new Error('Network response was not ok: ' + res.status);
+        const html = await res.text();
+
+        // распарсим полученный HTML
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, 'text/html');
+
+        // 1) получаем новые строки из incoming #cases-tbody
+        const incomingTbody = doc.querySelector('#cases-tbody');
+        if (incomingTbody) {
+          const rows = Array.from(incomingTbody.querySelectorAll('tr'));
+          rows.forEach(row => {
+            tbody.appendChild(row.cloneNode(true));
+          });
+        } else {
+          // fallback: взять любые tr из первого table tbody
+          const fallbackRows = doc.querySelectorAll('table tbody tr');
+          fallbackRows.forEach(r => tbody.appendChild(r.cloneNode(true)));
+        }
+
+        // 2) обновим ссылку Next: ищем #next-link в загруженной странице
+        const newNext = doc.querySelector('#next-link');
+        if (newNext && newNext.href) {
+          nextLink.href = newNext.href;
+        } else {
+          // если next отсутствует — удалим кнопку
+          nextLink.remove();
+        }
+
+        // 3) обновим Prev, если есть
+        const newPrev = doc.querySelector('#prev-link');
+        if (newPrev) {
+          const prevEl = document.getElementById('prev-link');
+          if (prevEl) prevEl.href = newPrev.href;
+        }
+
+        // 4) обновим счётчик элементов (если есть)
+        const newCount = doc.getElementById('meta-count');
+        if (newCount && metaCountEl) {
+          metaCountEl.textContent = newCount.textContent;
+        }
+      } catch (err) {
+        console.error('Ошибка при подгрузке следующей страницы:', err);
+        // можно показать уведомление пользователю
+      } finally {
+        // убрать спиннер и снять блокировку
+        if (spinner.parentElement) spinner.remove();
+        loading = false;
+      }
+    }); // конец addEventListener (без опций)
+  });
+  </script>
 </main>
 {% endblock %}
