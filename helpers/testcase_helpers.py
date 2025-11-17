@@ -11,10 +11,9 @@ from sqlalchemy import and_, asc, desc, or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import joinedload
 
+import app.models as models
 from app import db
 from app.clients import MinioClient
-from app.models import (Attachment, Tag, TestCase, TestCaseStep, TestCaseSuite,
-                        TestSuite)
 from constants import ASCII_CODING, ENCODING, TESTCASE_PER_PAGE_LIMIT
 
 minio_client = MinioClient()
@@ -97,14 +96,14 @@ def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
 # -------------------------------
 # Tag helpers
 # -------------------------------
-def _get_tag_by_id(tag_id: int) -> Optional[Tag]:
+def _get_tag_by_id(tag_id: int) -> Optional[models.Tag]:
     """Возвращает Tag по ID или None."""
-    return Tag.query.get(tag_id)
+    return models.Tag.query.get(tag_id)
 
 
-def _get_tag_by_name(name: str) -> Optional[Tag]:
+def _get_tag_by_name(name: str) -> Optional[models.Tag]:
     """Возвращает Tag по имени или None."""
-    return Tag.query.filter_by(name=name).first()
+    return models.Tag.query.filter_by(name=name).first()
 
 
 def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
@@ -130,7 +129,7 @@ def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     )
 
 
-def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[Tag]:
+def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
     """Возвращает существующий Tag или создаёт новый по имени.
 
     Поведение:
@@ -154,7 +153,7 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[Tag]:
         if tag:
             return tag
 
-        tag = Tag(name=tag_name)
+        tag = models.Tag(name=tag_name)
         db.session.add(tag)
         try:
             db.session.flush()  # пытаемся получить id сразу
@@ -196,17 +195,17 @@ def _normalize_suite_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _get_suite_by_id(suite_id: int) -> Optional[TestSuite]:
+def _get_suite_by_id(suite_id: int) -> Optional[models.TestSuite]:
     """Возвращает TestSuite по id или None."""
-    return TestSuite.query.get(suite_id)
+    return models.TestSuite.query.get(suite_id)
 
 
-def _get_suite_by_name(name: str) -> Optional[TestSuite]:
+def _get_suite_by_name(name: str) -> Optional[models.TestSuite]:
     """Возвращает TestSuite по имени или None."""
-    return TestSuite.query.filter_by(name=name).first()
+    return models.TestSuite.query.filter_by(name=name).first()
 
 
-def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[TestSuite]:
+def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuite]:
     """Возвращает существующий TestSuite или создаёт новый по имени.
 
     Поведение:
@@ -228,7 +227,7 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[TestSuite]:
         if suite:
             return suite
         now = datetime.now(timezone.utc)
-        suite = TestSuite(name=name, created_at=now, updated_at=now)
+        suite = models.TestSuite(name=name, created_at=now, updated_at=now)
         db.session.add(suite)
         try:
             db.session.flush()
@@ -275,7 +274,7 @@ def _normalize_step_input(raw: Dict[str, Any]) -> Dict[str, Any]:
 # -------------------------------
 # Core operation
 # -------------------------------
-def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
+def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
     """Создаёт TestCase и связанные сущности на основе payload."""
     input_payload = _validate_basic_fields(payload)
 
@@ -283,7 +282,7 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
         with _transaction_context():
             # Явно устанавливаем timestamps, чтобы не зависеть от server_default в БД
             now = datetime.now(timezone.utc)
-            test_case = TestCase(
+            test_case = models.TestCase(
                 name=input_payload["name"],
                 preconditions=input_payload.get("preconditions"),
                 description=input_payload.get("description"),
@@ -334,7 +333,7 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
                     )
                 positions_seen.add(position_step_input)
                 auto_position = max(auto_position, position_step_input + 1)
-                step = TestCaseStep(
+                step = models.TestCaseStep(
                     position=position_step_input,
                     action=step_input["action"],
                     expected=step_input.get("expected"),
@@ -361,7 +360,9 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
                 if suite.id in suite_ids_seen:
                     continue
                 suite_ids_seen.add(suite.id)
-                link = TestCaseSuite(suite=suite, position=normalized.get("position"))
+                link = models.TestCaseSuite(
+                    suite=suite, position=normalized.get("position")
+                )
                 test_case.suite_links.append(link)
 
             # Окончательный flush делаем один раз — когда все необходимые поля проставлены
@@ -380,7 +381,7 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> TestCase:
 # -------------------------------
 # Сериализатор
 # -------------------------------
-def serialize_test_case(tc: TestCase) -> Dict[str, Any]:
+def serialize_test_case(tc: models.TestCase) -> Dict[str, Any]:
     """Преобразует TestCase в JSON-совместимый словарь.
 
     Сериализуем только публичные и необходимые поля — без лишних внутренних атрибутов.
@@ -478,7 +479,7 @@ def get_test_cases_cursored(
     cursor: Optional[str] = None,
     sort: str = "-created_at",
     include_deleted: bool = False,
-) -> Tuple[List["TestCase"], Dict[str, Any]]:
+) -> Tuple[List["models.TestCase"], Dict[str, Any]]:
     """
     Возвращает (items, meta) используя cursor-based pagination.
 
@@ -500,42 +501,45 @@ def get_test_cases_cursored(
     limit = min(max(1, limit), 200)
 
     # Базовый query с eager-loading чтобы избежать N+1
-    query = TestCase.query.options(
-        joinedload(TestCase.tags),
-        joinedload(TestCase.steps),
-        joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+    query = models.TestCase.query.options(
+        joinedload(models.TestCase.tags),
+        joinedload(models.TestCase.steps),
+        joinedload(models.TestCase.suite_links).joinedload(models.TestCaseSuite.suite),
     )
 
     # is_deleted фильтр
     if not include_deleted:
-        query = query.filter(TestCase.is_deleted.is_(False))
+        query = query.filter(models.TestCase.is_deleted.is_(False))
     else:
-        query = query.filter(TestCase.is_deleted.is_(True))
+        query = query.filter(models.TestCase.is_deleted.is_(True))
 
     # Поиск q
     if q:
         pattern = f"%{q}%"
         query = query.filter(
-            or_(TestCase.name.ilike(pattern), TestCase.description.ilike(pattern))
+            or_(
+                models.TestCase.name.ilike(pattern),
+                models.TestCase.description.ilike(pattern),
+            )
         )
 
     # Фильтрация по тегам (ANY)
     if tags:
-        query = query.join(TestCase.tags).filter(Tag.name.in_(tags))
+        query = query.join(models.TestCase.tags).filter(models.Tag.name.in_(tags))
 
     # Фильтрация по suite_ids (ANY)
     if suite_ids:
-        query = query.join(TestCase.suite_links).filter(
-            TestCaseSuite.suite_id.in_(suite_ids)
+        query = query.join(models.TestCase.suite_links).filter(
+            models.TestCaseSuite.suite_id.in_(suite_ids)
         )
 
     # Фильтрация по suite_name (partial)
     if suite_name:
         pattern_suite = f"%{suite_name}%"
         query = (
-            query.join(TestCase.suite_links)
-            .join(TestCaseSuite.suite)
-            .filter(TestSuite.name.ilike(pattern_suite))
+            query.join(models.TestCase.suite_links)
+            .join(models.TestCaseSuite.suite)
+            .filter(models.TestSuite.name.ilike(pattern_suite))
         )
 
     # Сортировка: поддерживаем только created_at (вторичный ключ - id)
@@ -546,9 +550,13 @@ def get_test_cases_cursored(
         descending = True
 
     primary_order = (
-        desc(TestCase.created_at) if descending else asc(TestCase.created_at)
+        desc(models.TestCase.created_at)
+        if descending
+        else asc(models.TestCase.created_at)
     )
-    secondary_order = desc(TestCase.id) if descending else asc(TestCase.id)
+    secondary_order = (
+        desc(models.TestCase.id) if descending else asc(models.TestCase.id)
+    )
     query = query.order_by(primary_order, secondary_order)
 
     # Применяем курсор (если он есть)
@@ -565,10 +573,10 @@ def get_test_cases_cursored(
             # (created_at < cursor_created_at) OR (created_at == cursor_created_at AND id < cursor_id)
             query = query.filter(
                 or_(
-                    TestCase.created_at < cursor_created_at,
+                    models.TestCase.created_at < cursor_created_at,
                     and_(
-                        TestCase.created_at == cursor_created_at,
-                        TestCase.id < cursor_id,
+                        models.TestCase.created_at == cursor_created_at,
+                        models.TestCase.id < cursor_id,
                     ),
                 )
             )
@@ -576,10 +584,10 @@ def get_test_cases_cursored(
             # (created_at > cursor_created_at) OR (created_at == cursor_created_at AND id > cursor_id)
             query = query.filter(
                 or_(
-                    TestCase.created_at > cursor_created_at,
+                    models.TestCase.created_at > cursor_created_at,
                     and_(
-                        TestCase.created_at == cursor_created_at,
-                        TestCase.id > cursor_id,
+                        models.TestCase.created_at == cursor_created_at,
+                        models.TestCase.id > cursor_id,
                     ),
                 )
             )
@@ -602,7 +610,7 @@ def get_test_cases_cursored(
 
 def get_test_case_by_id(
     test_case_id: int, *, include_deleted: bool = False
-) -> TestCase:
+) -> models.TestCase:
     """
     Получает TestCase по его id с eager-loading связанных сущностей.
 
@@ -621,10 +629,10 @@ def get_test_case_by_id(
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
     # Используем joinedload, чтобы сразу подгрузить все нужные связи и избежать N+1
-    query = TestCase.query.options(
-        joinedload(TestCase.steps),
-        joinedload(TestCase.tags),
-        joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+    query = models.TestCase.query.options(
+        joinedload(models.TestCase.steps),
+        joinedload(models.TestCase.tags),
+        joinedload(models.TestCase.suite_links).joinedload(models.TestCaseSuite.suite),
     )
 
     # Получаем объект
@@ -694,7 +702,7 @@ def _transaction_context():
 # --------- Update TestCase logic ---------
 def update_test_case_from_payload(
     test_case_id: int, payload: Dict[str, Any]
-) -> TestCase:
+) -> models.TestCase:
     """
     Обновляет TestCase и связанные сущности на основании полученного payload.
 
@@ -724,10 +732,12 @@ def update_test_case_from_payload(
         # Контекст-менеджер гарантирует commit/rollback. Входим в транзакцию прежде, чем делать SELECT/UPDATE/INSERT
         with _transaction_context():
             # Получаем текущий объект внутри транзакции (важное изменение)
-            tc = TestCase.query.options(
-                joinedload(TestCase.steps),
-                joinedload(TestCase.tags),
-                joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+            tc = models.TestCase.query.options(
+                joinedload(models.TestCase.steps),
+                joinedload(models.TestCase.tags),
+                joinedload(models.TestCase.suite_links).joinedload(
+                    models.TestCaseSuite.suite
+                ),
             ).get(test_case_id)
 
             if not tc or tc.is_deleted:
@@ -736,7 +746,7 @@ def update_test_case_from_payload(
             # -----------------------
             # Обновляем теги (replace)
             # -----------------------
-            new_tags: List[Tag] = []
+            new_tags: List[models.Tag] = []
             tag_ids_seen = set()
             for raw_tag in normalized["tags"]:
                 tag_norm = _normalize_tag_input(raw_tag)
@@ -782,7 +792,7 @@ def update_test_case_from_payload(
                     raise ValidationError(f"Duplicate step position: {position}")
                 positions_seen.add(position)
                 auto_position = max(auto_position, position + 1)
-                step = TestCaseStep(
+                step = models.TestCaseStep(
                     position=position,
                     action=norm_step["action"],
                     expected=norm_step.get("expected"),
@@ -811,7 +821,7 @@ def update_test_case_from_payload(
                 if suite_obj.id in suite_ids_seen:
                     continue
                 suite_ids_seen.add(suite_obj.id)
-                link = TestCaseSuite(
+                link = models.TestCaseSuite(
                     suite=suite_obj, position=norm_suite_link.get("position")
                 )
                 tc.suite_links.append(link)
@@ -839,7 +849,7 @@ def update_test_case_from_payload(
         ) from ie
 
 
-def soft_delete_test_case(test_case_id: int) -> TestCase:
+def soft_delete_test_case(test_case_id: int) -> models.TestCase:
     """
     Soft-delete TestCase: пометить запись как удалённую, не удаляя дочерние записи
     (steps, suite_links, tags) — чтобы при возможном восстановлении они автоматически
@@ -859,10 +869,12 @@ def soft_delete_test_case(test_case_id: int) -> TestCase:
     try:
         with _transaction_context():
             # Загружаем объект внутри транзакции
-            tc = TestCase.query.options(
-                joinedload(TestCase.steps),
-                joinedload(TestCase.tags),
-                joinedload(TestCase.suite_links).joinedload(TestCaseSuite.suite),
+            tc = models.TestCase.query.options(
+                joinedload(models.TestCase.steps),
+                joinedload(models.TestCase.tags),
+                joinedload(models.TestCase.suite_links).joinedload(
+                    models.TestCaseSuite.suite
+                ),
             ).get(test_case_id)
 
             if not tc:
@@ -879,7 +891,7 @@ def soft_delete_test_case(test_case_id: int) -> TestCase:
             tc.deleted_at = now
             tc.updated_at = now
 
-            attachments = Attachment.query.filter_by(test_case_id=tc.id).all()
+            attachments = models.Attachment.query.filter_by(test_case_id=tc.id).all()
             for attachment in attachments:
                 try:
                     minio_client.remove_object(
@@ -894,7 +906,7 @@ def soft_delete_test_case(test_case_id: int) -> TestCase:
                     raise
 
             # Удаляем метаданные
-            Attachment.query.filter_by(test_case_id=tc.id).delete(
+            models.Attachment.query.filter_by(test_case_id=tc.id).delete(
                 synchronize_session=False
             )
 

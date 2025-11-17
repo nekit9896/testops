@@ -1,8 +1,6 @@
 import uuid
 
-from sqlalchemy import (BigInteger, Boolean, Column, DateTime, ForeignKey,
-                        Index, Integer, String, Table, Text, UniqueConstraint,
-                        func)
+import sqlalchemy as sqlalchemy
 from sqlalchemy.ext.associationproxy import association_proxy
 from sqlalchemy.orm import backref, relationship
 from werkzeug.utils import secure_filename
@@ -10,17 +8,20 @@ from werkzeug.utils import secure_filename
 from . import db
 
 # tags association (plain table)
-test_case_tags = Table(
+test_case_tags = sqlalchemy.Table(
     "test_case_tags",
     db.Model.metadata,
-    Column(
+    sqlalchemy.Column(
         "test_case_id",
-        Integer,
-        ForeignKey("test_cases.id", ondelete="CASCADE"),
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("test_cases.id", ondelete="CASCADE"),
         primary_key=True,
     ),
-    Column(
-        "tag_id", Integer, ForeignKey("tags.id", ondelete="CASCADE"), primary_key=True
+    sqlalchemy.Column(
+        "tag_id",
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("tags.id", ondelete="CASCADE"),
+        primary_key=True,
     ),
 )
 
@@ -33,8 +34,9 @@ class TestResult(db.Model):
     run_name = db.Column(db.String(255), nullable=False)
     start_date = db.Column(db.DateTime, nullable=True)
     end_date = db.Column(db.DateTime, nullable=True)
+    stand = db.Column(db.String(128), nullable=True, index=True)
     status = db.Column(db.String(50), nullable=False)
-    created_at = db.Column(db.DateTime, default=func.now(), nullable=False)
+    created_at = db.Column(db.DateTime, default=sqlalchemy.func.now(), nullable=False)
     is_deleted = db.Column(db.Boolean, default=False)
 
     def __repr__(self):
@@ -45,13 +47,17 @@ class TestResult(db.Model):
 class TestCaseSuite(db.Model):
     __tablename__ = "test_case_suites"
 
-    test_case_id = Column(
-        Integer, ForeignKey("test_cases.id", ondelete="CASCADE"), primary_key=True
+    test_case_id = sqlalchemy.Column(
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("test_cases.id", ondelete="CASCADE"),
+        primary_key=True,
     )
-    suite_id = Column(
-        Integer, ForeignKey("test_suites.id", ondelete="CASCADE"), primary_key=True
+    suite_id = sqlalchemy.Column(
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("test_suites.id", ondelete="CASCADE"),
+        primary_key=True,
     )
-    position = Column(Integer, nullable=True)
+    position = sqlalchemy.Column(sqlalchemy.Integer, nullable=True)
 
     # use backref to avoid ordering issues:
     test_case = relationship(
@@ -74,20 +80,24 @@ class TestCaseSuite(db.Model):
 class Attachment(db.Model):
     __tablename__ = "attachments"
 
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    test_case_id = Column(
-        Integer,
-        ForeignKey("test_cases.id", ondelete="CASCADE"),
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
+    test_case_id = sqlalchemy.Column(
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("test_cases.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    original_filename = Column(String(1024), nullable=False)
-    object_name = Column(String(2048), nullable=False, unique=True)  # ключ в MinIO
-    bucket = Column(String(255), nullable=False)
-    content_type = Column(String(255), nullable=True)
-    size = Column(BigInteger, nullable=True)
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
+    original_filename = sqlalchemy.Column(sqlalchemy.String(1024), nullable=False)
+    object_name = sqlalchemy.Column(
+        sqlalchemy.String(2048), nullable=False, unique=True
+    )  # ключ в MinIO
+    bucket = sqlalchemy.Column(sqlalchemy.String(255), nullable=False)
+    content_type = sqlalchemy.Column(sqlalchemy.String(255), nullable=True)
+    size = sqlalchemy.Column(sqlalchemy.BigInteger, nullable=True)
+    created_at = sqlalchemy.Column(
+        sqlalchemy.DateTime(timezone=True),
+        server_default=sqlalchemy.func.now(),
+        nullable=False,
     )
 
     test_case = relationship(
@@ -109,22 +119,24 @@ class Attachment(db.Model):
 
 class TestCase(db.Model):
     __tablename__ = "test_cases"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False)
-    preconditions = Column(Text, nullable=True)
-    description = Column(Text, nullable=True)
-    expected_result = Column(Text, nullable=True)
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
+    name = sqlalchemy.Column(sqlalchemy.String(255), nullable=False)
+    preconditions = sqlalchemy.Column(sqlalchemy.Text, nullable=True)
+    description = sqlalchemy.Column(sqlalchemy.Text, nullable=True)
+    expected_result = sqlalchemy.Column(sqlalchemy.Text, nullable=True)
+    created_at = sqlalchemy.Column(
+        sqlalchemy.DateTime(timezone=True),
+        server_default=sqlalchemy.func.now(),
         nullable=False,
     )
-    deleted_at = Column(DateTime(timezone=True), nullable=True)
-    is_deleted = Column(Boolean, default=False, nullable=False)
+    updated_at = sqlalchemy.Column(
+        sqlalchemy.DateTime(timezone=True),
+        server_default=sqlalchemy.func.now(),
+        onupdate=sqlalchemy.func.now(),
+        nullable=False,
+    )
+    deleted_at = sqlalchemy.Column(sqlalchemy.DateTime(timezone=True), nullable=True)
+    is_deleted = sqlalchemy.Column(sqlalchemy.Boolean, default=False, nullable=False)
 
     # steps
     steps = relationship(
@@ -157,8 +169,10 @@ class TestCase(db.Model):
     )
 
     __table_args__ = (
-        UniqueConstraint("name", "is_deleted", name="uq_testcase_name_active"),
-        Index("ix_test_cases_is_deleted", "is_deleted"),
+        sqlalchemy.UniqueConstraint(
+            "name", "is_deleted", name="uq_testcase_name_active"
+        ),
+        sqlalchemy.Index("ix_test_cases_is_deleted", "is_deleted"),
     )
 
     def __repr__(self):
@@ -167,20 +181,24 @@ class TestCase(db.Model):
 
 class TestCaseStep(db.Model):
     __tablename__ = "test_case_steps"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    test_case_id = Column(
-        Integer, ForeignKey("test_cases.id", ondelete="CASCADE"), nullable=False
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
+    test_case_id = sqlalchemy.Column(
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("test_cases.id", ondelete="CASCADE"),
+        nullable=False,
     )
-    position = Column(Integer, nullable=False)
-    action = Column(Text, nullable=False)
-    expected = Column(Text, nullable=True)
-    attachments = Column(Text, nullable=True)
+    position = sqlalchemy.Column(sqlalchemy.Integer, nullable=False)
+    action = sqlalchemy.Column(sqlalchemy.Text, nullable=False)
+    expected = sqlalchemy.Column(sqlalchemy.Text, nullable=True)
+    attachments = sqlalchemy.Column(sqlalchemy.Text, nullable=True)
 
     test_case = relationship("TestCase", back_populates="steps", passive_deletes=True)
 
     __table_args__ = (
-        UniqueConstraint("test_case_id", "position", name="uq_steps_per_case_position"),
-        Index("ix_steps_test_case_id", "test_case_id"),
+        sqlalchemy.UniqueConstraint(
+            "test_case_id", "position", name="uq_steps_per_case_position"
+        ),
+        sqlalchemy.Index("ix_steps_test_case_id", "test_case_id"),
     )
 
     def __repr__(self):
@@ -189,11 +207,13 @@ class TestCaseStep(db.Model):
 
 class TestSuite(db.Model):
     __tablename__ = "test_suites"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(255), nullable=False)
-    description = Column(Text, nullable=True)
-    parent_id = Column(
-        Integer, ForeignKey("test_suites.id", ondelete="SET NULL"), nullable=True
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
+    name = sqlalchemy.Column(sqlalchemy.String(255), nullable=False)
+    description = sqlalchemy.Column(sqlalchemy.Text, nullable=True)
+    parent_id = sqlalchemy.Column(
+        sqlalchemy.Integer,
+        sqlalchemy.ForeignKey("test_suites.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     children = relationship(
@@ -202,16 +222,18 @@ class TestSuite(db.Model):
         cascade="all, delete-orphan",
     )
 
-    created_at = Column(
-        DateTime(timezone=True), server_default=func.now(), nullable=False
-    )
-    updated_at = Column(
-        DateTime(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
+    created_at = sqlalchemy.Column(
+        sqlalchemy.DateTime(timezone=True),
+        server_default=sqlalchemy.func.now(),
         nullable=False,
     )
-    is_deleted = Column(Boolean, default=False, nullable=False)
+    updated_at = sqlalchemy.Column(
+        sqlalchemy.DateTime(timezone=True),
+        server_default=sqlalchemy.func.now(),
+        onupdate=sqlalchemy.func.now(),
+        nullable=False,
+    )
+    is_deleted = sqlalchemy.Column(sqlalchemy.Boolean, default=False, nullable=False)
 
     # `case_links` is provided automatically by backref in TestCaseSuite
     test_cases = association_proxy("case_links", "test_case")
@@ -222,8 +244,8 @@ class TestSuite(db.Model):
 
 class Tag(db.Model):
     __tablename__ = "tags"
-    id = Column(Integer, primary_key=True, autoincrement=True)
-    name = Column(String(100), nullable=False, unique=True)
+    id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
+    name = sqlalchemy.Column(sqlalchemy.String(100), nullable=False, unique=True)
     test_cases = relationship(
         "TestCase",
         secondary=test_case_tags,

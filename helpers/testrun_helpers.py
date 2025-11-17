@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
+from typing import Optional
 
 from flask import abort
 from minio import S3Error
@@ -15,6 +16,7 @@ import constants as const
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
+from helpers.allure_utils import extract_stand_from_environment_file
 from logger import init_logger
 
 minio_client = MinioClient()
@@ -51,6 +53,31 @@ def process_and_upload_file(run_name, file):
             logger.error(f"Файл {filename} пустой! и не будет загружен.")
             return
 
+        # Если файл называется environment.properties,
+        # пытаемся извлечь значение 'stand' (без записи на диск).
+        # Сохраняем в локальную переменную detected_stand для дальнейшего присвоения в БД.
+        detected_stand: Optional[str] = None
+        try:
+            if filename == "environment.properties":
+                # file_content может быть bytes или str — приводим к str
+                if isinstance(file_content, (bytes, bytearray)):
+                    content_text = file_content.decode("utf-8", errors="ignore")
+                else:
+                    content_text = str(file_content)
+                detected_stand = extract_stand_from_environment_file(content_text)
+                if detected_stand:
+                    detected_stand = detected_stand.strip()
+                    logger.info(
+                        "Обнаружен stand='%s' в присланном environment.properties для run=%s",
+                        detected_stand,
+                        run_name,
+                    )
+        except Exception:
+            # Не критично — логируем и продолжаем обработку (не блокируем загрузку файла).
+            logger.exception(
+                "Не удалось извлечь 'stand' из присланного environment.properties"
+            )
+
         content_length = len(file_content)
         logger.info(f"Размер файла {filename}: {content_length} байт")
 
@@ -67,6 +94,33 @@ def process_and_upload_file(run_name, file):
             file_stream=file_stream,
             content_length=content_length,
         )
+        if detected_stand:
+            try:
+                test_result: Optional[TestResult] = TestResult.query.filter_by(
+                    run_name=run_name, is_deleted=False
+                ).first()
+                if test_result:
+                    test_result.stand = detected_stand
+                    db.session.add(test_result)
+                    db.session.commit()
+                    logger.info(
+                        "Сохранили stand='%s' для run=%s в TestResult(id=%s)",
+                        detected_stand,
+                        run_name,
+                        test_result.id,
+                    )
+                else:
+                    logger.warning(
+                        "Не удалось найти TestResult для run_name=%s, stand=%s не сохранён",
+                        run_name,
+                        detected_stand,
+                    )
+            except Exception:
+                logger.exception(
+                    "Ошибка при сохранении stand=%s для run=%s в базе данных",
+                    detected_stand,
+                    run_name,
+                )
 
         return filename
 
@@ -297,6 +351,7 @@ def fetch_reports():
                 if result.end_date
                 else None
             ),
+            "stand": result.stand or None,
             "status": result.status,
         }
         for result in test_results

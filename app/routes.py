@@ -1,32 +1,20 @@
 from typing import List, Optional
 
-from flask import (Blueprint, Response, abort, flash, jsonify, redirect,
-                   render_template, request, url_for)
+import flask as flask
 from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
 
 import constants as const
+import helpers.testcase_attachment_helpers as attach_help
+import helpers.testcase_helpers as testcase_help
 from app import db
 from app.clients import MinioClient
 from app.method_override import payload_from_form_or_json
 from app.models import Attachment, TestCase, TestResult
 from helpers import testrun_helpers
-from helpers.testcase_attachment_helpers import (
-    create_attachment_record_and_commit, delete_attachment_by_object,
-    list_archives_for_test_case, list_attachments_for_test_case,
-    make_content_disposition, serialize_attachment,
-    stream_attachment_generator, upload_attachment_stream)
-from helpers.testcase_helpers import (ConflictError, NotFoundError,
-                                      ValidationError,
-                                      create_test_case_from_payload,
-                                      get_test_case_by_id,
-                                      get_test_cases_cursored,
-                                      parse_bool_param, serialize_test_case,
-                                      soft_delete_test_case,
-                                      update_test_case_from_payload)
 from logger import init_logger
 
-bp = Blueprint("routes", __name__)
+bp = flask.Blueprint("routes", __name__)
 minio_client = MinioClient()
 logger = init_logger()
 
@@ -38,14 +26,14 @@ def home():
     """
     Домашняя страница
     """
-    response = render_template(const.TEMPLATE_INDEX)
+    response = flask.render_template(const.TEMPLATE_INDEX)
     logger.info("Обработан запрос на главную страницу")
     return response
 
 
 @bp.route("/health", methods=["GET"])
 def health_check():
-    response = jsonify({"status": "ok"})
+    response = flask.jsonify({"status": "ok"})
     logger.info("Обработан запрос на проверку доступности")
     return response
 
@@ -57,10 +45,10 @@ def upload_results():
     """
     try:
         # Шаг 1. Получаем файлы из запроса и проверяем их наличие
-        files = request.files.getlist("files")
+        files = flask.request.files.getlist("files")
         if not files or all(f.filename == "" for f in files):
             logger.error("Необходимо загрузить хотя бы один файл")
-            abort(400, description="Необходимо загрузить хотя бы один файл")
+            flask.abort(400, description="Необходимо загрузить хотя бы один файл")
 
         # Проверка размера файлов
         testrun_helpers.check_files_size(files)
@@ -73,17 +61,17 @@ def upload_results():
         # Откат транзакций в случае ошибки при работе с БД
         db.session.rollback()
         logger.exception("Ошибка при создании записи в базе данных или директории")
-        abort(500, description=error_msg)
+        flask.abort(500, description=error_msg)
 
     # Шаг 3. Анализируем файлы и извлекаем параметры запуска автотестов
     try:
         test_run_info = testrun_helpers.check_all_tests_passed_run(files)
         if not test_run_info:
             logger.error("Не удалось извлечь параметры тестрана")
-            abort(400, description="Ошибка анализа файлов")
+            flask.abort(400, description="Ошибка анализа файлов")
     except Exception as error_msg:
         logger.exception("Неизвестная ошибка при анализе тестрана")
-        abort(500, description=error_msg)
+        flask.abort(500, description=error_msg)
 
     # Шаг 4. Формируем уникальное имя для запуска автотестов и обновляем данные в БД
     try:
@@ -93,7 +81,7 @@ def upload_results():
         # Откат транзакций в случае исключения
         db.session.rollback()
         logger.exception("Ошибка при сохранении статуса тестрана в базу данных")
-        abort(500, description=error_msg)
+        flask.abort(500, description=error_msg)
 
     # Шаг 5. Обрабатываем файлы и обновляем ссылку на них в БД
     success_files = []
@@ -121,7 +109,7 @@ def upload_results():
         logger.info(f"Успешно загруженные файлы в MinIO: {', '.join(success_files)}")
     if error_files:
         logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
-        abort(500, description="Некоторые файлы не были успешно обработаны")
+        flask.abort(500, description="Некоторые файлы не были успешно обработаны")
 
     # Шаг 6. Сразу генерируем allure-report и сохраняем в MinIO
     testrun = TestResult.query.get(new_result.id)
@@ -133,7 +121,9 @@ def upload_results():
     run_name = testrun.run_name
     testrun_helpers.get_or_generate_report(run_name)
 
-    response = jsonify({"run_id": new_result.id, "message": "Файлы успешно загружены"})
+    response = flask.jsonify(
+        {"run_id": new_result.id, "message": "Файлы успешно загружены"}
+    )
     response_code = 201
     logger.info("Файлы успешно загружены", status_code=response_code)
     return response, response_code
@@ -146,7 +136,7 @@ def get_reports():
     """
     results = testrun_helpers.fetch_reports()
     testrun_helpers.log_reports(results)
-    return render_template(const.TEMPLATE_REPORTS, results=results)
+    return flask.render_template(const.TEMPLATE_REPORTS, results=results)
 
 
 @bp.route("/reports/<int:result_id>", methods=["GET"])
@@ -182,7 +172,7 @@ def view_report(result_id: int):
 
     # Возвращает HTML как ответ
     html_content = html_file.read().decode(const.ENCODING)
-    return Response(html_content, mimetype="text/html")
+    return flask.Response(html_content, mimetype="text/html")
 
 
 @bp.route("/delete_test_run/<int:run_id>", methods=["DELETE"])
@@ -200,13 +190,13 @@ def delete_test_run(run_id):
     if test_result:
         test_result.is_deleted = True
         db.session.commit()
-        response = jsonify({"message": "TestRun помечен как удаленный"})
+        response = flask.jsonify({"message": "TestRun помечен как удаленный"})
         logger.info("Успешное удаление TestRun", run_id=run_id)
         return response
     else:
         error_msg = "TestRun не найден"
         logger.error(error_msg, run_id=run_id)
-        abort(404, description=error_msg)
+        flask.abort(404, description=error_msg)
 
 
 @bp.route("/test_cases", methods=["POST"])
@@ -240,69 +230,71 @@ def create_test_case():
     payload = payload_from_form_or_json()
     if not payload:
         logger.error("create_test_case: пустой или некорректный JSON")
-        abort(400, description="Invalid or missing JSON body")
+        flask.abort(400, description="Invalid or missing JSON body")
 
     try:
         # Всю логику создания в helper — там транзакция и валидация
-        tc = create_test_case_from_payload(payload)
+        tc = testcase_help.create_test_case_from_payload(payload)
 
-    except ValidationError as ve:
+    except testcase_help.ValidationError as ve:
         # Ошибки валидации входных данных -> 400 Bad Request
         logger.warning(
             "Ошибки валидации входных данных при создании TestCase", exc_info=ve
         )
-        abort(400, description=str(ve))
+        flask.abort(400, description=str(ve))
 
-    except NotFoundError as ne:
+    except testcase_help.NotFoundError as ne:
         # Ссылка на несуществующий Tag/Suite -> 404 Not Found
         logger.warning(
             "Ссылка на несуществующий Tag/Suite при создании TestCase", exc_info=ne
         )
-        abort(404, description=str(ne))
+        flask.abort(404, description=str(ne))
 
-    except ConflictError as ce:
+    except testcase_help.ConflictError as ce:
         logger.warning("Конфликт при создании TestCase", exc_info=ce)
         # Если клиент ожидает HTML — попробуем flash+redirect, но защитимся от отсутствия session/secret_key
-        if request.accept_mimetypes.accept_html:
+        if flask.flask.request.accept_mimetypes.accept_html:
             try:
-                flash("Название тест-кейса должно быть уникальным", "error")
-                return redirect(url_for("routes.test_cases_page"))
+                flask.flash("Название тест-кейса должно быть уникальным", "error")
+                return flask.redirect(flask.url_for("routes.test_cases_page"))
             except RuntimeError:
                 logger.warning(
                     "Сессия недоступна flashing сообщения. Возвращаем 409.",
                     exc_info=True,
                 )
                 # fallback — отдаём обычный 409, обработчик ошибок вернёт страницу/JSON
-                abort(409, description=str(ce))
+                flask.abort(409, description=str(ce))
 
         # Для API/JSON клиентов — обычный 409
-        abort(409, description=str(ce))
+        flask.abort(409, description=str(ce))
 
     except DatabaseError as dbe:
         # Ошибки БД — откатываем сессию и возвращаем 500
         db.session.rollback()
         logger.exception("Ошибка БД при создании TestCase", exc_info=dbe)
-        abort(500, description="Ошибка базы данных")
+        flask.abort(500, description="Ошибка базы данных")
 
     except Exception as e:
         # Непредвиденные ошибки — откат и 500
         db.session.rollback()
         logger.exception("Непредвиденная ошибка при создании TestCase", exc_info=e)
-        abort(500, description="Неожиданная ошибка")
+        flask.abort(500, description="Неожиданная ошибка")
 
     # Успех — сериализуем и возвращаем 201 Created с локой
-    body = serialize_test_case(tc)
+    body = testcase_help.serialize_test_case(tc)
     try:
         # Пытаемся сформировать URL через именованный роут get_test_case
-        location = url_for("routes.get_test_case", id=tc.id)
+        location = flask.url_for("routes.get_test_case", id=tc.id)
     except BuildError:
         # Если детального роутa ещё нет — используем fallback путь
         location = f"/test_cases/{tc.id}"
 
     # Если клиент принимает html — редирект на страницу тест кейсов с выбранным кейсом
-    if request.accept_mimetypes.accept_html:
-        return redirect(url_for("routes.test_cases_page", selected_id=tc.id))
-    return jsonify(body), 201, {"Location": location}
+    if flask.request.accept_mimetypes.accept_html:
+        return flask.redirect(
+            flask.url_for("routes.test_cases_page", selected_id=tc.id)
+        )
+    return flask.jsonify(body), 201, {"Location": location}
 
 
 @bp.route("/test_cases", methods=["GET"])
@@ -320,10 +312,10 @@ def list_test_cases():
       - sort: (опционально) только 'created_at' или '-created_at' (по умолчанию '-created_at')
       - include_deleted: true|false
     """
-    q = request.args.get("q")
-    tags = request.args.getlist("tag") or None
+    q = flask.request.args.get("q")
+    tags = flask.request.args.getlist("tag") or None
 
-    suite_id_params = request.args.getlist("suite_id") or None
+    suite_id_params = flask.request.args.getlist("suite_id") or None
     suite_ids: Optional[List[int]] = None
     if suite_id_params:
         parsed_suite_ids: List[int] = []
@@ -336,14 +328,16 @@ def list_test_cases():
         if parsed_suite_ids:
             suite_ids = parsed_suite_ids
 
-    suite_name = request.args.get("suite_name")
-    limit = request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT)
-    cursor = request.args.get("cursor")
-    sort = request.args.get("sort", "-created_at")
-    include_deleted = parse_bool_param(request.args.get("include_deleted"))
+    suite_name = flask.request.args.get("suite_name")
+    limit = flask.request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT)
+    cursor = flask.request.args.get("cursor")
+    sort = flask.request.args.get("sort", "-created_at")
+    include_deleted = testcase_help.parse_bool_param(
+        flask.request.args.get("include_deleted")
+    )
 
     try:
-        items, meta = get_test_cases_cursored(
+        items, meta = testcase_help.get_test_cases_cursored(
             q=q,
             tags=tags,
             suite_ids=suite_ids,
@@ -353,16 +347,16 @@ def list_test_cases():
             sort=sort,
             include_deleted=bool(include_deleted),
         )
-    except ValidationError as ve:
+    except testcase_help.ValidationError as ve:
         logger.warning("Ошибка валидации list_test_cases", exc_info=ve)
-        abort(400, description=str(ve))
+        flask.abort(400, description=str(ve))
     except Exception as e:
         logger.exception("Неожиданная ошибка в list_test_cases", exc_info=e)
-        abort(500, description="Ошибка базы данных")
+        flask.abort(500, description="Ошибка базы данных")
 
-    serialized = [serialize_test_case(tc) for tc in items]
+    serialized = [testcase_help.serialize_test_case(tc) for tc in items]
     response = {"items": serialized, "meta": meta}
-    return jsonify(response)
+    return flask.jsonify(response)
 
 
 @bp.route("/test_cases/<int:test_case_id>", methods=["GET"])
@@ -382,24 +376,28 @@ def get_test_case(test_case_id: int):
       - 500 Internal Server Error — при неизвестных ошибках БД
     """
     # Разбор optional-параметра include_deleted (string -> bool/None)
-    include_deleted_param = parse_bool_param(request.args.get("include_deleted"))
+    include_deleted_param = testcase_help.parse_bool_param(
+        flask.request.args.get("include_deleted")
+    )
     include_deleted = bool(include_deleted_param)
 
     try:
-        tc = get_test_case_by_id(test_case_id, include_deleted=include_deleted)
-    except ValidationError as ve:
+        tc = testcase_help.get_test_case_by_id(
+            test_case_id, include_deleted=include_deleted
+        )
+    except testcase_help.ValidationError as ve:
         logger.warning("Ошибка валидации при получении TestCase", exc_info=ve)
-        abort(400, description=str(ve))
-    except NotFoundError as ne:
+        flask.abort(400, description=str(ve))
+    except testcase_help.NotFoundError as ne:
         logger.info("TestCase не найден", exc_info=ne)
-        abort(404, description=str(ne))
+        flask.abort(404, description=str(ne))
     except Exception as exc:
         logger.exception("Неожиданная ошибка при получении TestCase", exc_info=exc)
-        abort(500, description="Ошибка сервера")
+        flask.abort(500, description="Ошибка сервера")
 
     # Сериализуем и возвращаем
-    body = serialize_test_case(tc)
-    return jsonify(body)
+    body = testcase_help.serialize_test_case(tc)
+    return flask.jsonify(body)
 
 
 @bp.route("/test_cases/<int:test_case_id>", methods=["PUT", "POST"])
@@ -418,45 +416,47 @@ def update_test_case(test_case_id: int):
       - 500 Internal Server Error — ошибки БД / прочие ошибки
     """
 
-    if request.is_json:
-        payload = request.get_json(silent=True)
+    if flask.request.is_json:
+        payload = flask.request.get_json(silent=True)
     else:
         payload = payload_from_form_or_json()
 
     if not payload:
         logger.error("update_test_case: пустой или некорректный JSON")
-        abort(400, description="Invalid or missing JSON body")
+        flask.abort(400, description="Invalid or missing JSON body")
 
     try:
-        updated_tc = update_test_case_from_payload(test_case_id, payload)
+        updated_tc = testcase_help.update_test_case_from_payload(test_case_id, payload)
 
-    except ValidationError as ve:
+    except testcase_help.ValidationError as ve:
         logger.warning("Ошибки валидации при обновлении TestCase", exc_info=ve)
-        abort(400, description=str(ve))
+        flask.abort(400, description=str(ve))
 
-    except NotFoundError as ne:
+    except testcase_help.NotFoundError as ne:
         logger.info("TestCase не найден при попытке обновления", exc_info=ne)
-        abort(404, description=str(ne))
+        flask.abort(404, description=str(ne))
 
-    except ConflictError as ce:
+    except testcase_help.ConflictError as ce:
         logger.warning("Конфликт при обновлении TestCase", exc_info=ce)
-        abort(409, description=str(ce))
+        flask.abort(409, description=str(ce))
 
     except DatabaseError as dbe:
         db.session.rollback()
         logger.exception("Ошибка БД при обновлении TestCase", exc_info=dbe)
-        abort(500, description="Database error")
+        flask.abort(500, description="Database error")
 
     except Exception as e:
         db.session.rollback()
         logger.exception("Непредвиденная ошибка при обновлении TestCase", exc_info=e)
-        abort(500, description="Unexpected error")
+        flask.abort(500, description="Unexpected error")
 
-    body = serialize_test_case(updated_tc)
-    if request.accept_mimetypes.accept_html:
+    body = testcase_help.serialize_test_case(updated_tc)
+    if flask.request.accept_mimetypes.accept_html:
         # редирект обратно на страницу с выбранным кейсом
-        return redirect(url_for("routes.test_cases_page", selected_id=test_case_id))
-    return jsonify(body), 200
+        return flask.redirect(
+            flask.url_for("routes.test_cases_page", selected_id=test_case_id)
+        )
+    return flask.jsonify(body), 200
 
 
 @bp.route("/test_cases/<int:test_case_id>", methods=["DELETE"])
@@ -470,33 +470,33 @@ def delete_test_case(test_case_id: int):
       - 500 — прочие ошибки
     """
     try:
-        soft_delete_test_case(test_case_id)
+        testcase_help.soft_delete_test_case(test_case_id)
 
-    except ValidationError as ve:
+    except testcase_help.ValidationError as ve:
         logger.warning("delete_test_case: ошибка валидации", exc_info=ve)
-        abort(400, description=str(ve))
+        flask.abort(400, description=str(ve))
 
-    except NotFoundError as ne:
+    except testcase_help.NotFoundError as ne:
         logger.info("delete_test_case: TestCase не найден", exc_info=ne)
-        abort(404, description=str(ne))
+        flask.abort(404, description=str(ne))
 
-    except ConflictError as ce:
+    except testcase_help.ConflictError as ce:
         logger.warning("delete_test_case: конфликт при удалении", exc_info=ce)
-        abort(409, description=str(ce))
+        flask.abort(409, description=str(ce))
 
     except DatabaseError as dbe:
         db.session.rollback()
         logger.exception("delete_test_case: ошибка БД", exc_info=dbe)
-        abort(500, description="Database error")
+        flask.abort(500, description="Database error")
 
     except Exception as e:
         db.session.rollback()
         logger.exception("delete_test_case: непредвиденная ошибка", exc_info=e)
-        abort(500, description="Unexpected error")
+        flask.abort(500, description="Unexpected error")
 
     # Успешно: ничего не возвращаем, редиректим на станицу с тест кейсами
-    if request.accept_mimetypes.accept_html:
-        return redirect(url_for("routes.test_cases_page"))
+    if flask.request.accept_mimetypes.accept_html:
+        return flask.redirect(flask.url_for("routes.test_cases_page"))
     return "", 204
 
 
@@ -506,17 +506,17 @@ def upload_test_case_attachment(test_case_id: int):
     Загрузка одного файла в тест-кейс (multipart/form-data, field name 'file').
     Возвращает 201 + JSON (метаданные attachment).
     """
-    if "file" not in request.files:
-        abort(400, description="Файл обязателен")
+    if "file" not in flask.request.files:
+        flask.abort(400, description="Файл обязателен")
 
-    file_storage = request.files["file"]
+    file_storage = flask.request.files["file"]
     if not file_storage or file_storage.filename == "":
-        abort(400, description="Файл обязателен")
+        flask.abort(400, description="Файл обязателен")
 
     # проверим, что тест-кейс существует и не удалён
     tc = TestCase.query.get(test_case_id)
     if not tc or tc.is_deleted:
-        abort(404, description="TestCase не найден")
+        flask.abort(404, description="TestCase не найден")
 
     # bucket по константе
     bucket = getattr(
@@ -526,18 +526,20 @@ def upload_test_case_attachment(test_case_id: int):
     )
 
     try:
-        object_name, size = upload_attachment_stream(test_case_id, file_storage, bucket)
+        object_name, size = attach_help.upload_attachment_stream(
+            test_case_id, file_storage, bucket
+        )
     except Exception:
         logger.exception(
             "upload_test_case_attachment: upload failed",
             test_case_id=test_case_id,
             filename=file_storage.filename,
         )
-        abort(500, description="Storage upload failed")
+        flask.abort(500, description="Storage upload failed")
 
     content_type = getattr(file_storage, "mimetype", None)
     try:
-        attachment = create_attachment_record_and_commit(
+        attachment = attach_help.create_attachment_record_and_commit(
             test_case_id, file_storage.filename, object_name, bucket, content_type, size
         )
     except Exception:
@@ -546,24 +548,26 @@ def upload_test_case_attachment(test_case_id: int):
             test_case_id=test_case_id,
             object_name=object_name,
         )
-        abort(500, description="Ошибка базы данных при создании вложения")
+        flask.abort(500, description="Ошибка базы данных при создании вложения")
 
-    body = serialize_attachment(attachment)
-    if request.accept_mimetypes.accept_html:
+    body = attach_help.serialize_attachment(attachment)
+    if flask.request.accept_mimetypes.accept_html:
         # редирект обратно на страницу где selected_case открыт
-        return redirect(url_for("routes.test_cases_page", selected_id=test_case_id))
+        return flask.redirect(
+            flask.url_for("routes.test_cases_page", selected_id=test_case_id)
+        )
     else:
-        return jsonify(body), 201
+        return flask.jsonify(body), 201
 
 
 @bp.route("/test_cases/<int:test_case_id>/attachments", methods=["GET"])
 def list_test_case_attachments(test_case_id: int):
     tc = TestCase.query.get(test_case_id)
     if not tc:
-        abort(404, description="TestCase не найден")
+        flask.abort(404, description="TestCase не найден")
 
-    items = list_attachments_for_test_case(test_case_id)
-    return jsonify({"items": items}), 200
+    items = attach_help.list_attachments_for_test_case(test_case_id)
+    return flask.jsonify({"items": items}), 200
 
 
 @bp.route(
@@ -576,32 +580,32 @@ def get_test_case_attachment(test_case_id: int, attachment_id: int):
     """
     attachment = Attachment.query.get(attachment_id)
     if not attachment or attachment.test_case_id != test_case_id:
-        abort(404, description="Вложение не найдено")
+        flask.abort(404, description="Вложение не найдено")
 
-    download_mode = request.args.get("download")
+    download_mode = flask.request.args.get("download")
     if download_mode in ("1", "true", "True"):
         # stream через сервер
         try:
-            stream_generator = stream_attachment_generator(attachment)
+            stream_generator = attach_help.stream_attachment_generator(attachment)
         except Exception:
             logger.exception(
                 "get_test_case_attachment: ошибка чтения хранилища",
                 attachment_id=attachment_id,
                 test_case_id=test_case_id,
             )
-            abort(500, description="ошибка чтения хранилища")
+            flask.abort(500, description="ошибка чтения хранилища")
 
         filename = (
             attachment.original_filename or attachment.object_name or "attachment"
         )
-        cd_value = make_content_disposition(
+        cd_value = attach_help.make_content_disposition(
             filename
         )  # можно вызвать локально или inline
         headers = {"Content-Disposition": cd_value}
         if attachment.size:
             headers["Content-Length"] = str(int(attachment.size))
 
-        return Response(
+        return flask.Response(
             stream_generator,
             content_type=attachment.content_type or "application/octet-stream",
             headers=headers,
@@ -621,17 +625,17 @@ def get_test_case_attachment(test_case_id: int, attachment_id: int):
         ),
         "download_path": f"/test_cases/{test_case_id}/attachments/{attachment.id}?download=1",
     }
-    return jsonify(body), 200
+    return flask.jsonify(body), 200
 
 
 @bp.route("/test_cases/<int:test_case_id>/attachments/archives", methods=["GET"])
 def get_archives_for_test_case(test_case_id: int):
     tc = TestCase.query.get(test_case_id)
     if not tc:
-        abort(404, description="TestCase не найден")
+        flask.abort(404, description="TestCase не найден")
 
-    items = list_archives_for_test_case(test_case_id)
-    return jsonify({"items": items}), 200
+    items = attach_help.list_archives_for_test_case(test_case_id)
+    return flask.jsonify({"items": items}), 200
 
 
 @bp.route(
@@ -640,10 +644,10 @@ def get_archives_for_test_case(test_case_id: int):
 def delete_test_case_attachment(test_case_id: int, attachment_id: int):
     attachment = Attachment.query.get(attachment_id)
     if not attachment or attachment.test_case_id != test_case_id:
-        abort(404, description="Вложение не найдено")
+        flask.abort(404, description="Вложение не найдено")
 
     try:
-        delete_attachment_by_object(attachment)
+        attach_help.delete_attachment_by_object(attachment)
     except Exception:
         db.session.rollback()
         logger.exception(
@@ -651,27 +655,31 @@ def delete_test_case_attachment(test_case_id: int, attachment_id: int):
             attachment_id=attachment_id,
             test_case_id=test_case_id,
         )
-        abort(500, description="Не удалось удалить вложение.")
+        flask.abort(500, description="Не удалось удалить вложение.")
 
     logger.info(
         "delete_test_case_attachment: удалено",
         attachment_id=attachment_id,
         test_case_id=test_case_id,
     )
-    if request.accept_mimetypes.accept_html:
+    if flask.request.accept_mimetypes.accept_html:
         # редирект обратно на страницу тест кейса, чтобы фронт обновился
-        return redirect(url_for("routes.test_cases_page", selected_id=test_case_id))
+        return flask.redirect(
+            flask.url_for("routes.test_cases_page", selected_id=test_case_id)
+        )
     return "", 204
 
 
 @bp.route("/testcases", methods=["GET"])
 def test_cases_page():
     # Параметры фильтра/страницы
-    q = request.args.get("q")
-    suite_id = request.args.get("suite_id")
-    sort = request.args.get("sort", "-created_at")
-    cursor = request.args.get("cursor")
-    include_deleted = parse_bool_param(request.args.get("include_deleted"))
+    q = flask.request.args.get("q")
+    suite_id = flask.request.args.get("suite_id")
+    sort = flask.request.args.get("sort", "-created_at")
+    cursor = flask.request.args.get("cursor")
+    include_deleted = testcase_help.parse_bool_param(
+        flask.request.args.get("include_deleted")
+    )
 
     # получить кейсы (через существующий helper)
     try:
@@ -683,12 +691,12 @@ def test_cases_page():
             except Exception:
                 suite_ids = None
 
-        items, meta = get_test_cases_cursored(
+        items, meta = testcase_help.get_test_cases_cursored(
             q=q,
             tags=None,
             suite_ids=suite_ids,
             suite_name=None,
-            limit=request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT),
+            limit=flask.request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT),
             cursor=cursor,
             sort=sort,
             include_deleted=bool(include_deleted),
@@ -709,18 +717,18 @@ def test_cases_page():
 
     # selected_case (если нужно показать подробности)
     selected_case = None
-    selected_id = request.args.get("selected_id")
+    selected_id = flask.request.args.get("selected_id")
     if selected_id:
         try:
-            selected_case = get_test_case_by_id(
+            selected_case = testcase_help.get_test_case_by_id(
                 int(selected_id), include_deleted=bool(include_deleted)
             )
         except Exception:
             selected_case = None
 
-    create_flag = request.args.get("create") in ("1", "true", "True")
+    create_flag = flask.request.args.get("create") in ("1", "true", "True")
 
-    return render_template(
+    return flask.render_template(
         "test_cases.html",
         cases=items,
         meta=meta,
