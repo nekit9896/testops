@@ -29,7 +29,11 @@
                 <td class="p-2">{{ result.start_date }}</td>
                 <td class="p-2">{{ result.end_date }}</td>
                 <td class="p-2">{{ result.stand or '-' }}</td>
-                <td class="p-2">{{ result.status }}</td>
+                <td class="p-2">{% set status = (result.status)|lower %}
+                    <span class="{% if status == 'fail' %}text-red-600{% elif status == 'passed' %}text-green-600{% else %}text-black{% endif %}">
+                        {{ result.status}}
+                    </span>
+                </td>
                 <td class="p-2">
                     <a href="/reports/{{ result.id }}" class="text-blue-500 underline" target="_blank">Открыть</a>
                 </td>
