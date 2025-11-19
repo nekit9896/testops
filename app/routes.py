@@ -776,10 +776,3 @@ def test_cases_page():
         all_tags=all_tags,  # <- список тегов для фронта
         selected_tags=",".join(tags) if tags else "",
     )
-
-
-@bp.route("/api/tags")
-def api_tags():
-    # вернуть список всех тегов
-    tags = Tag.query.order_by(Tag.name).all()
-    return flask.jsonify([{"id": tag.id, "name": tag.name} for tag in tags])
