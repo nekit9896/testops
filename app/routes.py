@@ -10,7 +10,7 @@ import helpers.testcase_helpers as testcase_help
 from app import db
 from app.clients import MinioClient
 from app.method_override import payload_from_form_or_json
-from app.models import Attachment, TestCase, TestResult
+from app.models import Attachment, Tag, TestCase, TestResult
 from helpers import testrun_helpers
 from logger import init_logger
 
@@ -673,13 +673,40 @@ def delete_test_case_attachment(test_case_id: int, attachment_id: int):
 @bp.route("/testcases", methods=["GET"])
 def test_cases_page():
     # Параметры фильтра/страницы
-    q = flask.request.args.get("q")
+    q = flask.request.args.get("q", "").strip()
+    suite_name = flask.request.args.get("suite_name", "").strip()
     suite_id = flask.request.args.get("suite_id")
     sort = flask.request.args.get("sort", "-created_at")
     cursor = flask.request.args.get("cursor")
     include_deleted = testcase_help.parse_bool_param(
         flask.request.args.get("include_deleted")
     )
+
+    # поддерживаем форматы для тегов:
+    #   ?tags=one,two
+    #   ?tags=one&tags=two
+    raw_tags = []
+    try:
+        # getlist вернёт все повторяющиеся params, если есть
+        raw_list = flask.request.args.getlist("tags")
+        for entry in raw_list:
+            if not entry:
+                continue
+            # разбираем CSV внутри каждого entry
+            for tag in entry.split(","):
+                tag = tag.strip()
+                if tag:
+                    raw_tags.append(tag)
+    except Exception:
+        raw_tags = []
+
+    # уникализируем, сохраняя порядок
+    seen = set()
+    tags = []
+    for tag in raw_tags:
+        if tag not in seen:
+            seen.add(tag)
+            tags.append(tag)
 
     # получить кейсы (через существующий helper)
     try:
@@ -693,9 +720,9 @@ def test_cases_page():
 
         items, meta = testcase_help.get_test_cases_cursored(
             q=q,
-            tags=None,
+            tags=tags or None,
             suite_ids=suite_ids,
-            suite_name=None,
+            suite_name=suite_name or None,
             limit=flask.request.args.get("limit", const.TESTCASE_PER_PAGE_LIMIT),
             cursor=cursor,
             sort=sort,
@@ -707,13 +734,24 @@ def test_cases_page():
 
     # подготовка suites (список для левого сайдбара)
     try:
-        from app.models import TestSuite
+        from app.models import Tag, TestSuite
 
-        suites = (
-            TestSuite.query.filter_by(is_deleted=False).order_by(TestSuite.name).all()
-        )
+        suites_q = TestSuite.query.filter_by(is_deleted=False)
+        if suite_name:
+            # фильтр по имени suite (ILike чтобы поиск был нечувствителен к регистру)
+            suites_q = suites_q.filter(TestSuite.name.ilike(f"%{suite_name}%"))
+        suites = suites_q.order_by(TestSuite.name).all()
+
+        # подготовим список всех тегов для dropdown на фронте (если модель Tag есть)
+        try:
+            # если у вас есть флаг is_deleted для Tag — используйте его
+            all_tags = Tag.query.order_by(Tag.name).all()
+        except Exception:
+            # fallback: если Tag нет / не поддерживает .order_by
+            all_tags = []
     except Exception:
         suites = []
+        all_tags = []
 
     # selected_case (если нужно показать подробности)
     selected_case = None
@@ -735,4 +773,13 @@ def test_cases_page():
         suites=suites,
         selected_case=selected_case,
         create=create_flag,
+        all_tags=all_tags,  # <- список тегов для фронта
+        selected_tags=",".join(tags) if tags else "",
     )
+
+
+@bp.route("/api/tags")
+def api_tags():
+    # вернуть список всех тегов
+    tags = Tag.query.order_by(Tag.name).all()
+    return flask.jsonify([{"id": tag.id, "name": tag.name} for tag in tags])
