@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
 from flask import current_app
-from sqlalchemy import and_, asc, desc, or_
+from sqlalchemy import and_, asc, desc, func, or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
 from sqlalchemy.orm import joinedload
 
@@ -364,6 +364,15 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                     suite=suite, position=normalized.get("position")
                 )
                 test_case.suite_links.append(link)
+
+            # Если мы добавили этот тест-кейс в уже помеченные как deleted sutes —
+            # сделаем их видимыми (is_deleted = False)
+            if suite_ids_seen:
+                for suite_id in suite_ids_seen:
+                    suite_obj = models.TestSuite.query.get(suite_id)
+                    if suite_obj and suite_obj.is_deleted:
+                        suite_obj.is_deleted = False
+                        db.session.add(suite_obj)
 
             # Окончательный flush делаем один раз — когда все необходимые поля проставлены
             db.session.flush()
@@ -743,6 +752,9 @@ def update_test_case_from_payload(
             if not tc or tc.is_deleted:
                 raise NotFoundError(f"TestCase with id={test_case_id} not found")
 
+            # сохраняем старые suite_ids до удаления связей
+            old_suite_ids = {link.suite_id for link in getattr(tc, "suite_links", [])}
+
             # -----------------------
             # Обновляем теги (replace)
             # -----------------------
@@ -825,6 +837,39 @@ def update_test_case_from_payload(
                     suite=suite_obj, position=norm_suite_link.get("position")
                 )
                 tc.suite_links.append(link)
+            # -----------------------
+            # Обрабатываем изменения флагов is_deleted у affected suites
+            # -----------------------
+            new_suite_ids = suite_ids_seen
+            added = new_suite_ids - old_suite_ids
+            removed = old_suite_ids - new_suite_ids
+
+            # Для добавленных сьютов: гарантируем, что они видимы
+            for suite_id in added:
+                suite_obj = models.TestSuite.query.get(suite_id)
+                if suite_obj and suite_obj.is_deleted:
+                    suite_obj.is_deleted = False
+                    db.session.add(suite_obj)
+
+            # Для удалённых сьютов: если они стали пустыми (нет активных кейсов) — пометить is_deleted=True
+            for suite_id in removed:
+                active_count = (
+                    db.session.query(func.count(models.TestCaseSuite.test_case_id))
+                    .join(
+                        models.TestCase,
+                        models.TestCaseSuite.test_case_id == models.TestCase.id,
+                    )
+                    .filter(
+                        models.TestCaseSuite.suite_id == suite_id,
+                        models.TestCase.is_deleted.is_(False),
+                    )
+                    .scalar()
+                )
+                if not active_count:
+                    suite_obj = models.TestSuite.query.get(suite_id)
+                    if suite_obj and not suite_obj.is_deleted:
+                        suite_obj.is_deleted = True
+                        db.session.add(suite_obj)
 
             now = datetime.now(timezone.utc)
 
@@ -910,6 +955,32 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
                 synchronize_session=False
             )
 
+            db.session.flush()
+
+            # получаем уникальные id сьютов, в которых был этот кейс
+            suite_ids = {link.suite_id for link in getattr(tc, "suite_links", [])}
+
+            for suite_id in suite_ids:
+                # count активных (is_deleted == False) кейсов в этом suite
+                active_count = (
+                    db.session.query(func.count(models.TestCaseSuite.test_case_id))
+                    .join(
+                        models.TestCase,
+                        models.TestCaseSuite.test_case_id == models.TestCase.id,
+                    )
+                    .filter(
+                        models.TestCaseSuite.suite_id == suite_id,
+                        models.TestCase.is_deleted.is_(False),
+                    )
+                    .scalar()
+                )
+                if not active_count or int(active_count) == 0:
+                    suite = models.TestSuite.query.get(suite_id)
+                    if suite and not suite.is_deleted:
+                        suite.is_deleted = True
+                        db.session.add(suite)
+
+            # гарантируем, что объекты обновлены в сессии
             db.session.flush()
             db.session.refresh(tc)
 
