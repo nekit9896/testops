@@ -666,7 +666,81 @@
       return wrapper;
     }
 
-    // ... (оставлены без изменений) ...
+    function reindexSteps(){
+      Array.from(container.children).forEach((child, i) => {
+        const num = child.querySelector('.w-8');
+        if(num) num.textContent = `#${i+1}`;
+
+        const action = child.querySelector('textarea[name$="[action]"], input[name$="[action]"]');
+        const expected = child.querySelector('textarea[name$="[expected]"], input[name$="[expected]"]');
+        if(action) action.name = `steps[${i}][action]`;
+        if(expected) expected.name = `steps[${i}][expected]`;
+
+        const ins = child.querySelector('.btn-insert-step');
+        const del = child.querySelector('.btn-delete-step');
+        if(ins) ins.dataset.insertIndex = i;
+        if(del) del.dataset.deleteIndex = i;
+      });
+
+      // синхронизируем глобальный индекс (если где-то используется)
+      window.editIndex = container.children.length;
+    }
+
+    // кнопка в заголовке — добавляет шаг в конец (если список пуст, появится первый элемент)
+    const topAddBtn = document.getElementById('btn-add-step-top');
+    if(topAddBtn){
+      topAddBtn.addEventListener('click', function(){
+        const children = container.children;
+        const pos = children.length; // вставляем в конец
+        const newNode = createStepNode(pos);
+        container.appendChild(newNode);
+        reindexSteps();
+        // если у вас были focus/scroll-заметки — можно поставить фокус в action:
+        const last = container.children[container.children.length - 1];
+        const actionField = last.querySelector('textarea[name$="[action]"], input[name$="[action]"]');
+        if(actionField) actionField.focus();
+      });
+    }
+
+    // delegation: insert / delete buttons
+    container.addEventListener('click', function(ev){
+      const ins = ev.target.closest('.btn-insert-step');
+      if(ins){
+        const idx = Number(ins.dataset.insertIndex);
+        const pos = idx + 1; // вставляем *после* текущего шага
+        const newNode = createStepNode(idx); // индекс временный, реиндексация потом поправит имена
+        const children = container.children;
+        if(pos >= children.length) container.appendChild(newNode);
+        else container.insertBefore(newNode, children[pos]);
+        reindexSteps();
+        return;
+      }
+
+      const del = ev.target.closest('.btn-delete-step');
+      if(del){
+        const idx = Number(del.dataset.deleteIndex);
+        if(!confirm(`Удалить шаг #${idx+1}?`)) return;
+        const child = container.children[idx];
+        if(child) child.remove();
+        reindexSteps();
+        return;
+      }
+    });
+
+  document.addEventListener('click', function(e){
+    const btn = e.target.closest('button[data-confirm]');
+    if(!btn) return;
+
+    // если кнопка не внутри формы — просто показать confirm и если отмена — ничего не делать
+    const msg = btn.dataset.confirm || 'Подтвердите действие';
+    if(!confirm(msg)){
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      return false;
+    }
+    // иначе — позволяем кнопке продолжить (отправить форму)
+    // ничего дополнительно не делаем здесь
+  }, true); // use capture=true чтобы перехватить до submit-обработчиков
   });
   </script>
 
