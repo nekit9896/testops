@@ -7,7 +7,7 @@ ALLURE_REPORT_FOLDER_NAME = "allure-reports"  # Отсюда читаются г
 ALLURE_RESULT_FOLDER_NAME = "allure-results"
 
 # Files
-ALLOWED_EXTENSIONS = {"html", "json", "txt"}
+ALLOWED_EXTENSIONS = {"html", "json", "txt", "properties"}
 ALLURE_REPORT_NAME = "index.html"
 LOG_FILE_NAME = "logs.json"
 

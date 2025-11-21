@@ -88,15 +88,9 @@ def upload_results():
     error_files = []
     logger.info("Загрузка файлов в Minio", run_name=new_result.run_name)
     for file in files:
-        filename = getattr(file, "filename", "") or ""
-        # Разрешаем environment.properties отдельно даже если расширение не в ALLOWED_EXTENSIONS
-        is_env_properties = filename == "environment.properties"
-
-        if not file or (
-            not is_env_properties and not testrun_helpers.allowed_file(filename)
-        ):
-            logger.error(f"Недопустимый файл: {filename}")
-            error_files.append(filename)
+        if not file or not testrun_helpers.allowed_file(file.filename):
+            logger.error(f"Недопустимый файл: {file.filename}")
+            error_files.append(file.filename)
             continue  # Пропуск недопустимого файла и продолжение обработки
 
         try:
@@ -106,33 +100,16 @@ def upload_results():
             if successful_filename:
                 success_files.append(successful_filename)
         except (testrun_helpers.DatabaseError, OSError) as file_error:
-            logger.exception(f"Ошибка обработки файла {filename}: {file_error}")
+            logger.exception(f"Ошибка обработки файла {file.filename}: {file_error}")
             db.session.rollback()
-            error_files.append(filename)
-        except Exception as ex:
-            # Ловим все прочие исключения, чтобы не ломать весь upload
-            logger.exception(
-                "Неожиданная ошибка при обработке файла %s: %s", filename, ex
-            )
-            db.session.rollback()
-            error_files.append(filename)
+            error_files.append(file.filename)
 
     # Лог итогового статуса обработки файлов
     if success_files:
         logger.info(f"Успешно загруженные файлы в MinIO: {', '.join(success_files)}")
     if error_files:
         logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
-        # Не возвращаем 500 — лучше вернуть Partial Content / Multi-Status
-        return (
-            flask.jsonify(
-                {
-                    "message": "Часть файлов обработана успешно",
-                    "processed": success_files,
-                    "failed": error_files,
-                }
-            ),
-            207,
-        )
+        flask.abort(500, description="Некоторые файлы не были успешно обработаны")
 
     # Шаг 6. Сразу генерируем allure-report и сохраняем в MinIO
     testrun = TestResult.query.get(new_result.id)

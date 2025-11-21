@@ -5,7 +5,6 @@ import os
 import shutil
 import subprocess
 import tempfile
-from pathlib import Path
 from typing import Optional
 
 from flask import abort
@@ -55,7 +54,8 @@ def process_and_upload_file(run_name, file):
             return
 
         # Если файл называется environment.properties,
-        # пытаемся извлечь значение 'stand' (записываем временный файл и передаем путь в парсер).
+        # пытаемся извлечь значение 'stand' (без записи на диск).
+        # Сохраняем в локальную переменную detected_stand для дальнейшего присвоения в БД.
         detected_stand: Optional[str] = None
         try:
             if filename == "environment.properties":
@@ -64,37 +64,7 @@ def process_and_upload_file(run_name, file):
                     content_text = file_content.decode("utf-8", errors="ignore")
                 else:
                     content_text = str(file_content)
-
-                # Записываем содержимое во временный файл, чтобы использовать существующую функцию,
-                # которая ожидает путь к файлу.
-                tmp_path: Optional[Path] = None
-                try:
-                    with tempfile.NamedTemporaryFile(
-                        mode="w",
-                        encoding="utf-8",
-                        delete=False,
-                        suffix=".properties",
-                    ) as tf:
-                        tf.write(content_text)
-                        tmp_path = Path(tf.name)
-
-                    # Вызываем функцию, ожидающую путь к файлу
-                    detected_stand = extract_stand_from_environment_file(tmp_path)
-                except Exception:
-                    logger.exception(
-                        "Ошибка при создании/парсинге временного environment.properties для run=%s",
-                        run_name,
-                    )
-                finally:
-                    # стараемся удалить временный файл, если он был создан
-                    try:
-                        if tmp_path and tmp_path.exists():
-                            tmp_path.unlink()
-                    except Exception:
-                        logger.exception(
-                            "Не удалось удалить временный файл %s", tmp_path
-                        )
-
+                detected_stand = extract_stand_from_environment_file(content_text)
                 if detected_stand:
                     detected_stand = detected_stand.strip()
                     logger.info(

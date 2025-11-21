@@ -70,35 +70,61 @@ def _extract_properties_from_content(file_content: str) -> Dict[str, str]:
     return _parse_properties_text(file_content)
 
 
-def extract_stand_from_environment_file(file_path: str | Path) -> Optional[str]:
+def extract_stand_from_environment_file(
+    file_path_or_content: str | Path | bytes,
+) -> Optional[str]:
     """
-    Читает заданный файл (environment.properties) и извлекает значение 'stand'.
-    Поддерживает:
-      - JSON-представление: { "stand": "test4", ... }
-      - properties-представление: stand=test4
-    Также смотрит на fallback-ключи: 'stand_name', 'environment', 'env'.
-    Возвращает строку с именем стенда или None, если ключ не найден / чтение упало.
-    """
-    path = Path(file_path)
-    if not path.exists() or not path.is_file():
-        logger.debug("Environment file not found or is not a file: %s", path)
-        return None
+    Универсальная функция извлечения 'stand' из environment-файла/контента.
 
+    Принимает:
+      - путь к файлу (str или pathlib.Path) — тогда будет прочитан файл с диска,
+      - либо непосредственный текст/bytes с содержимым файла (json или properties),
+        например когда вы уже считали файл из запроса/stream (это случай в testrun_helpers).
+
+    Поддерживаются форматы:
+      - JSON: {"stand": "test4"} (а также другие валидные JSON-объекты)
+      - classic properties: stand=test4
+      - альтернативные ключи: "stand_name", "environment", "env"
+
+    Возвращает строку с именем стенда или None.
+    """
     try:
-        raw_text = _read_text_from_file(path)
-        properties = _extract_properties_from_content(raw_text)
+        # Если это байты, декодируем
+        if isinstance(file_path_or_content, (bytes, bytearray)):
+            raw_text = file_path_or_content.decode("utf-8", errors="ignore")
+        else:
+            # приводим к строке для проверки
+            candidate = str(file_path_or_content)
+
+            # Если это существующий путь к файлу — читаем с диска
+            try:
+                path = Path(candidate)
+                if path.exists() and path.is_file():
+                    raw_text = _read_text_from_file(path)
+                else:
+                    # иначе считаем, что это уже текстовое содержимое
+                    raw_text = candidate
+            except Exception:
+                # на всякий случай fallback — считаем как содержимое
+                raw_text = candidate
+
+        # Парсим содержимое универсальным парсером
+        properties = _extract_properties_from_content(raw_text or "")
+
         # основной ключ
         stand_value = properties.get("stand")
         if stand_value:
             return stand_value.strip()
+
         # возможные альтернативные ключи
         for fallback_key in ("stand_name", "environment", "env"):
             fallback_value = properties.get(fallback_key)
             if fallback_value:
                 return fallback_value.strip()
+
         return None
+
     except Exception as error:
-        logger.exception(
-            "Failed to extract 'stand' from environment file %s: %s", path, error
-        )
+        # Логируем детально, но не поднимаем исключение — не критично для загрузки результата
+        logger.exception("Failed to extract 'stand' from environment input: %s", error)
         return None
