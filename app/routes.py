@@ -10,7 +10,7 @@ import helpers.testcase_helpers as testcase_help
 from app import db
 from app.clients import MinioClient
 from app.method_override import payload_from_form_or_json
-from app.models import Attachment, Tag, TestCase, TestResult
+from app.models import Attachment, TestCase, TestResult
 from helpers import testrun_helpers
 from logger import init_logger
 
