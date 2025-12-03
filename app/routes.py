@@ -1,7 +1,8 @@
-from typing import List, Optional
+from typing import List, Optional, Sequence, Tuple
 
 import flask as flask
 from sqlalchemy.exc import DatabaseError
+from werkzeug.datastructures import FileStorage
 from werkzeug.routing import BuildError
 
 import constants as const
@@ -17,6 +18,74 @@ from logger import init_logger
 bp = flask.Blueprint("routes", __name__)
 minio_client = MinioClient()
 logger = init_logger()
+
+
+def _get_request_files() -> List[FileStorage]:
+    """Возвращает список валидных файлов из запроса."""
+    files = flask.request.files.getlist("files")
+    valid_files = [file for file in files if file and file.filename]
+    if not valid_files:
+        logger.error("Необходимо загрузить хотя бы один файл")
+        flask.abort(400, description="Необходимо загрузить хотя бы один файл")
+    return valid_files
+
+
+def _create_temp_test_result() -> TestResult:
+    """Создает временную запись TestResult или завершает запрос с ошибкой."""
+    try:
+        new_result = testrun_helpers.create_temporary_test_result()
+        logger.info("Создана новая временная запись о запуске автотестов")
+        return new_result
+    except DatabaseError as error_msg:
+        db.session.rollback()
+        logger.exception("Ошибка при создании записи в базе данных")
+        flask.abort(500, description=str(error_msg))
+
+
+def _extract_test_run_info(files: Sequence[FileStorage]):
+    """Анализирует файлы и возвращает информацию о тестране."""
+    try:
+        test_run_info = testrun_helpers.check_all_tests_passed_run(files)
+        if not test_run_info:
+            logger.error("Не удалось извлечь параметры тестрана")
+            flask.abort(400, description="Ошибка анализа файлов")
+        return test_run_info
+    except Exception as error_msg:
+        logger.exception("Неизвестная ошибка при анализе тестрана")
+        flask.abort(500, description=str(error_msg))
+
+
+def _upload_all_files(
+    run_name: str, files: Sequence[FileStorage]
+) -> Tuple[List[str], List[str]]:
+    """Загружает файлы и разделяет их на успешные/ошибочные."""
+    success_files: List[str] = []
+    error_files: List[str] = []
+    minio_client.ensure_bucket_exists(const.ALLURE_RESULTS_BUCKET_NAME)
+
+    for file in files:
+        filename = file.filename or "unknown"
+        if not testrun_helpers.allowed_file(filename):
+            logger.error("Недопустимый файл: %s", filename)
+            error_files.append(filename)
+            continue
+
+        try:
+            uploaded = testrun_helpers.process_and_upload_file(run_name, file)
+            success_files.append(uploaded)
+        except (testrun_helpers.DatabaseError, OSError, ValueError) as file_error:
+            logger.exception("Ошибка обработки файла %s: %s", filename, file_error)
+            db.session.rollback()
+            error_files.append(filename)
+
+    return success_files, error_files
+
+
+def _get_existing_run_or_abort(result_id: int) -> TestResult:
+    """Возвращает TestResult или завершает запрос, если запись недоступна."""
+    testrun = TestResult.query.get(result_id)
+    testrun_helpers.log_and_abort(result_id, testrun)
+    return testrun
 
 
 @bp.route("/", methods=["GET"])
@@ -43,83 +112,30 @@ def upload_results():
     """
     API-метод для загрузки файлов и создания тестового запуска
     """
-    try:
-        # Шаг 1. Получаем файлы из запроса и проверяем их наличие
-        files = flask.request.files.getlist("files")
-        if not files or all(f.filename == "" for f in files):
-            logger.error("Необходимо загрузить хотя бы один файл")
-            flask.abort(400, description="Необходимо загрузить хотя бы один файл")
+    files = _get_request_files()
+    testrun_helpers.check_files_size(files)
 
-        # Проверка размера файлов
-        testrun_helpers.check_files_size(files)
+    new_result = _create_temp_test_result()
+    test_run_info = _extract_test_run_info(files)
 
-        # Шаг 2. Создаем временную запись о запуске автотестов в БД
-        new_result = testrun_helpers.create_temporary_test_result()
-        logger.info("Создана новая временная запись о запуске автотестов")
-
-    except DatabaseError as error_msg:
-        # Откат транзакций в случае ошибки при работе с БД
-        db.session.rollback()
-        logger.exception("Ошибка при создании записи в базе данных или директории")
-        flask.abort(500, description=error_msg)
-
-    # Шаг 3. Анализируем файлы и извлекаем параметры запуска автотестов
-    try:
-        test_run_info = testrun_helpers.check_all_tests_passed_run(files)
-        if not test_run_info:
-            logger.error("Не удалось извлечь параметры тестрана")
-            flask.abort(400, description="Ошибка анализа файлов")
-    except Exception as error_msg:
-        logger.exception("Неизвестная ошибка при анализе тестрана")
-        flask.abort(500, description=error_msg)
-
-    # Шаг 4. Формируем уникальное имя для запуска автотестов и обновляем данные в БД
     try:
         testrun_helpers.update_test_result(new_result, test_run_info)
-        logger.info(f"Обновлены данные тестрана с ID: {new_result.id}")
+        logger.info("Обновлены данные тестрана с ID: %s", new_result.id)
     except DatabaseError as error_msg:
-        # Откат транзакций в случае исключения
         db.session.rollback()
         logger.exception("Ошибка при сохранении статуса тестрана в базу данных")
-        flask.abort(500, description=error_msg)
+        flask.abort(500, description=str(error_msg))
 
-    # Шаг 5. Обрабатываем файлы и обновляем ссылку на них в БД
-    success_files = []
-    error_files = []
-    logger.info("Загрузка файлов в Minio", run_name=new_result.run_name)
-    for file in files:
-        if not file or not testrun_helpers.allowed_file(file.filename):
-            logger.error(f"Недопустимый файл: {file.filename}")
-            error_files.append(file.filename)
-            continue  # Пропуск недопустимого файла и продолжение обработки
+    success_files, error_files = _upload_all_files(new_result.run_name, files)
 
-        try:
-            successful_filename = testrun_helpers.process_and_upload_file(
-                new_result.run_name, file
-            )
-            if successful_filename:
-                success_files.append(successful_filename)
-        except (testrun_helpers.DatabaseError, OSError) as file_error:
-            logger.exception(f"Ошибка обработки файла {file.filename}: {file_error}")
-            db.session.rollback()
-            error_files.append(file.filename)
-
-    # Лог итогового статуса обработки файлов
     if success_files:
-        logger.info(f"Успешно загруженные файлы в MinIO: {', '.join(success_files)}")
+        logger.info("Успешно загруженные файлы в MinIO: %s", ", ".join(success_files))
     if error_files:
-        logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
+        logger.warning("Ошибка обработки следующих файлов: %s", ", ".join(error_files))
         flask.abort(500, description="Некоторые файлы не были успешно обработаны")
 
-    # Шаг 6. Сразу генерируем allure-report и сохраняем в MinIO
-    testrun = TestResult.query.get(new_result.id)
-
-    # Проверка на существование и статус TestResult
-    if not testrun or testrun.is_deleted:
-        testrun_helpers.log_and_abort(new_result.id, testrun)
-
-    run_name = testrun.run_name
-    testrun_helpers.get_or_generate_report(run_name)
+    testrun = _get_existing_run_or_abort(new_result.id)
+    testrun_helpers.get_or_generate_report(testrun.run_name)
 
     response = flask.jsonify(
         {"run_id": new_result.id, "message": "Файлы успешно загружены"}
