@@ -461,42 +461,117 @@ def check_files_size(files, max_size=None) -> bool:
     return True
 
 
-def fetch_reports():
-    """
-    Извлекает записи отчетов из базы данных и преобразует их в список словарей
-    """
-    test_results = (
-        TestResult.query.filter_by(is_deleted=False)
-        .order_by(TestResult.created_at.desc())
-        .limit(20)
-        .all()
+def _format_datetime(value: Optional[datetime.datetime]) -> Optional[str]:
+    if not value:
+        return None
+    return value.strftime(const.VIEW_DATE_FORMAT)
+
+
+def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
+    """Приводит TestResult к словарю для фронтенда."""
+    return {
+        "id": result.id,
+        "run_name": result.run_name,
+        "start_date": _format_datetime(result.start_date),
+        "end_date": _format_datetime(result.end_date),
+        "stand": result.stand or None,
+        "status": result.status,
+    }
+
+
+def _has_older_runs(oldest_id: int) -> bool:
+    """Проверяет наличие более старых записей по id."""
+    return (
+        TestResult.query.filter(
+            TestResult.is_deleted.is_(False), TestResult.id < oldest_id
+        )
+        .order_by(TestResult.id.desc())
+        .limit(1)
+        .first()
+        is not None
     )
-    return [
-        {
-            "id": result.id,
-            "run_name": result.run_name,
-            "start_date": (
-                result.start_date.strftime(const.VIEW_DATE_FORMAT)
-                if result.start_date
-                else None
-            ),
-            "end_date": (
-                result.end_date.strftime(const.VIEW_DATE_FORMAT)
-                if result.end_date
-                else None
-            ),
-            "stand": result.stand or None,
-            "status": result.status,
+
+
+def _has_newer_runs(newest_id: int) -> bool:
+    """Проверяет наличие более новых записей по id."""
+    return (
+        TestResult.query.filter(
+            TestResult.is_deleted.is_(False), TestResult.id > newest_id
+        )
+        .order_by(TestResult.id.asc())
+        .limit(1)
+        .first()
+        is not None
+    )
+
+
+def fetch_reports(
+    cursor: Optional[int],
+    limit: int,
+    direction: str = "next",
+) -> Dict[str, Any]:
+    """
+    Возвращает страницу отчетов с курсорной пагинацией.
+    direction: 'next' (старее) или 'prev' (новее).
+    """
+    if direction not in {"next", "prev"}:
+        raise ValueError("direction must be either 'next' or 'prev'")
+
+    base_query = TestResult.query.filter_by(is_deleted=False)
+    if cursor:
+        if direction == "next":
+            base_query = base_query.filter(TestResult.id < cursor)
+        else:
+            base_query = base_query.filter(TestResult.id > cursor)
+
+    order_column = TestResult.id.desc()
+    if direction == "prev":
+        order_column = TestResult.id.asc()
+
+    results = base_query.order_by(order_column).limit(limit + 1).all()
+    has_more_in_direction = len(results) > limit
+    items = results[:limit]
+
+    if direction == "prev":
+        items = list(reversed(items))
+
+    serialized = [_serialize_test_result(item) for item in items]
+
+    if not items:
+        return {
+            "items": [],
+            "next_cursor": None,
+            "prev_cursor": None,
+            "has_next": False,
+            "has_prev": False,
         }
-        for result in test_results
-    ]
+
+    newest_id = items[0].id
+    oldest_id = items[-1].id
+
+    has_prev = _has_newer_runs(newest_id)
+    has_next = _has_older_runs(oldest_id)
+
+    # Обновляем флаги, учитывая результат текущего запроса
+    if direction == "next" and cursor:
+        has_prev = True
+    if direction == "prev":
+        has_next = True
+        if not has_more_in_direction:
+            has_prev = False
+
+    return {
+        "items": serialized,
+        "next_cursor": oldest_id if has_next else None,
+        "prev_cursor": newest_id if has_prev else None,
+        "has_next": has_next,
+        "has_prev": has_prev,
+    }
 
 
-def log_reports(results: List[Dict[str, Any]]) -> None:
-    """
-    Логирует информацию о состоянии списка отчетов
-    """
-    if results:
+def log_reports(results_present: bool) -> None:
+    """Логирует состояние страницы отчётов."""
+    if results_present:
         logger.info("Обработан запрос на страницу списка отчетов", status_code=200)
     else:
         logger.info(
