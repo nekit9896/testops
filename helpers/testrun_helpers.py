@@ -5,8 +5,9 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Optional, Sequence
+from typing import List, Optional, Sequence, Tuple
 
+import flask
 from flask import abort
 from minio import S3Error
 from sqlalchemy import inspect
@@ -22,6 +23,74 @@ from logger import init_logger
 
 minio_client = MinioClient()
 logger = init_logger()
+
+
+def get_request_files() -> List[FileStorage]:
+    """Возвращает список валидных файлов из запроса."""
+    files = flask.request.files.getlist("files")
+    valid_files = [file for file in files if file and file.filename]
+    if not valid_files:
+        logger.error("Необходимо загрузить хотя бы один файл")
+        flask.abort(400, description="Необходимо загрузить хотя бы один файл")
+    return valid_files
+
+
+def create_temp_test_result() -> TestResult:
+    """Создает временную запись TestResult или завершает запрос с ошибкой."""
+    try:
+        new_result = create_temporary_test_result()
+        logger.info("Создана новая временная запись о запуске автотестов")
+        return new_result
+    except DatabaseError as error_msg:
+        db.session.rollback()
+        logger.exception("Ошибка при создании записи в базе данных")
+        flask.abort(500, description=str(error_msg))
+
+
+def extract_test_run_info(files: Sequence[FileStorage]):
+    """Анализирует файлы и возвращает информацию о тестране."""
+    try:
+        test_run_info = check_all_tests_passed_run(files)
+        if not test_run_info:
+            logger.error("Не удалось извлечь параметры тестрана")
+            flask.abort(400, description="Ошибка анализа файлов")
+        return test_run_info
+    except Exception as error_msg:
+        logger.exception("Неизвестная ошибка при анализе тестрана")
+        flask.abort(500, description=str(error_msg))
+
+
+def upload_all_files(
+    run_name: str, files: Sequence[FileStorage]
+) -> Tuple[List[str], List[str]]:
+    """Загружает файлы и разделяет их на успешные/ошибочные."""
+    success_files: List[str] = []
+    error_files: List[str] = []
+    minio_client.ensure_bucket_exists(const.ALLURE_RESULTS_BUCKET_NAME)
+
+    for file in files:
+        filename = file.filename or "unknown"
+        if not allowed_file(filename):
+            logger.error("Недопустимый файл: %s", filename)
+            error_files.append(filename)
+            continue
+
+        try:
+            uploaded = process_and_upload_file(run_name, file)
+            success_files.append(uploaded)
+        except (DatabaseError, OSError, ValueError) as file_error:
+            logger.exception("Ошибка обработки файла %s: %s", filename, file_error)
+            db.session.rollback()
+            error_files.append(filename)
+
+    return success_files, error_files
+
+
+def get_existing_run_or_abort(result_id: int) -> TestResult:
+    """Возвращает TestResult или завершает запрос, если запись недоступна."""
+    testrun = TestResult.query.get(result_id)
+    log_and_abort(result_id, testrun)
+    return testrun
 
 
 def _validate_upload_file(file: FileStorage) -> str:
@@ -109,6 +178,44 @@ def _safe_int(value: Optional[int]) -> Optional[int]:
         return None
 
 
+def _status_indicates_failure(status: Optional[str]) -> bool:
+    """Возвращает True, если значение статуса сигнализирует о неуспехе."""
+    if not status:
+        return False
+    return str(status).lower() != const.STATUS_PASS
+
+
+def _steps_contain_failure(steps: Optional[Sequence[dict]]) -> bool:
+    """Рекурсивно проверяет шаги на наличие статусов отличных от passed."""
+    if not steps:
+        return False
+
+    for step in steps:
+        if _status_indicates_failure(step.get(const.STATUS_KEY)):
+            return True
+        if _steps_contain_failure(step.get("steps")):
+            return True
+    return False
+
+
+def _result_contains_failure(data: dict) -> bool:
+    """Проверяет результат теста на наличие любых неуспешных статусов."""
+    if _status_indicates_failure(data.get(const.STATUS_KEY)):
+        return True
+
+    if _steps_contain_failure(data.get("steps")):
+        return True
+
+    for section in ("befores", "afters"):
+        for entry in data.get(section, []):
+            if _status_indicates_failure(entry.get(const.STATUS_KEY)):
+                return True
+            if _steps_contain_failure(entry.get("steps")):
+                return True
+
+    return False
+
+
 def allowed_file(filename: str) -> bool:
     """
     По точке находим расширение файла и проверяем на соответствие списка разрешенных в ALLOWED_EXTENSIONS
@@ -186,7 +293,7 @@ def check_all_tests_passed_run(files: Sequence[FileStorage]):
 
     Возвращает:
         dict: Словарь с ключами и значениями:
-            - const.STATUS_KEY: Статус выполнения тестов ('success' или 'fail').
+            - const.STATUS_KEY: Статус выполнения тестов ('passed' или 'fail').
             - const.START_RUN_KEY: Время начала выполнения тестов в строковом формате
               (или None, если время не определено).
             - const.STOP_RUN_KEY: Время окончания выполнения тестов в строковом формате
@@ -216,10 +323,14 @@ def check_all_tests_passed_run(files: Sequence[FileStorage]):
         if filename.endswith(const.RESULT_NAMING):
             data = parse_json_file(file)
 
-            if not data or data.get(const.STATUS_KEY) != const.STATUS_PASS:
+            if not data:
                 status = const.STATUS_FAIL
+                logger.warning("Файл %s не содержит валидный JSON", filename)
+            else:
+                if _result_contains_failure(data):
+                    status = const.STATUS_FAIL
+                    logger.info("В файле %s обнаружены неуспешные шаги", filename)
 
-            if data:
                 start_ms = _safe_int(data.get(const.START_RUN_KEY))
                 stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
                 if start_ms is not None:
