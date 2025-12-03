@@ -51,7 +51,7 @@ def upload_results():
 
     try:
         testrun_helpers.update_test_result(new_result, test_run_info)
-        logger.info("Обновлены данные тестрана с ID: %s", new_result.id)
+        logger.info(f"Обновлены данные тестрана с ID: {new_result.id}")
     except DatabaseError as error_msg:
         db.session.rollback()
         logger.exception("Ошибка при сохранении статуса тестрана в базу данных")
@@ -62,9 +62,9 @@ def upload_results():
     )
 
     if success_files:
-        logger.info("Успешно загруженные файлы в MinIO: %s", ", ".join(success_files))
+        logger.info(f"Успешно загруженные файлы в MinIO: {', '.join(success_files)}")
     if error_files:
-        logger.warning("Ошибка обработки следующих файлов: %s", ", ".join(error_files))
+        logger.warning(f"Ошибка обработки следующих файлов: {', '.join(error_files)}")
         flask.abort(500, description="Некоторые файлы не были успешно обработаны")
 
     testrun = testrun_helpers.get_existing_run_or_abort(new_result.id)
