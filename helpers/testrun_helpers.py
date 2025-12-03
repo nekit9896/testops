@@ -5,12 +5,14 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Optional
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+import flask
 from flask import abort
 from minio import S3Error
 from sqlalchemy import inspect
 from sqlalchemy.exc import DatabaseError
+from werkzeug.datastructures import FileStorage
 
 import constants as const
 from app import db
@@ -23,7 +25,198 @@ minio_client = MinioClient()
 logger = init_logger()
 
 
-def allowed_file(filename):
+def get_request_files() -> List[FileStorage]:
+    """Возвращает список валидных файлов из запроса."""
+    files = flask.request.files.getlist("files")
+    valid_files = [file for file in files if file and file.filename]
+    if not valid_files:
+        logger.error("Необходимо загрузить хотя бы один файл")
+        flask.abort(400, description="Необходимо загрузить хотя бы один файл")
+    return valid_files
+
+
+def create_temp_test_result() -> TestResult:
+    """Создает временную запись TestResult или завершает запрос с ошибкой."""
+    try:
+        new_result = create_temporary_test_result()
+        logger.info("Создана новая временная запись о запуске автотестов")
+        return new_result
+    except DatabaseError as error_msg:
+        db.session.rollback()
+        logger.exception("Ошибка при создании записи в базе данных")
+        flask.abort(500, description=str(error_msg))
+
+
+def extract_test_run_info(files: Sequence[FileStorage]):
+    """Анализирует файлы и возвращает информацию о тестране."""
+    try:
+        test_run_info = check_all_tests_passed_run(files)
+        if not test_run_info:
+            logger.error("Не удалось извлечь параметры тестрана")
+            flask.abort(400, description="Ошибка анализа файлов")
+        return test_run_info
+    except Exception as error_msg:
+        logger.exception("Неизвестная ошибка при анализе тестрана")
+        flask.abort(500, description=str(error_msg))
+
+
+def upload_all_files(
+    run_name: str, files: Sequence[FileStorage]
+) -> Tuple[List[str], List[str]]:
+    """Загружает файлы и разделяет их на успешные/ошибочные."""
+    success_files: List[str] = []
+    error_files: List[str] = []
+    minio_client.ensure_bucket_exists(const.ALLURE_RESULTS_BUCKET_NAME)
+
+    for file in files:
+        filename = file.filename or "unknown"
+        if not allowed_file(filename):
+            logger.error("Недопустимый файл: %s", filename)
+            error_files.append(filename)
+            continue
+
+        try:
+            uploaded = process_and_upload_file(run_name, file)
+            success_files.append(uploaded)
+        except (DatabaseError, OSError, ValueError) as file_error:
+            logger.exception("Ошибка обработки файла %s: %s", filename, file_error)
+            db.session.rollback()
+            error_files.append(filename)
+
+    return success_files, error_files
+
+
+def get_existing_run_or_abort(result_id: int) -> TestResult:
+    """Возвращает TestResult или завершает запрос, если запись недоступна."""
+    testrun = TestResult.query.get(result_id)
+    log_and_abort(result_id, testrun)
+    return testrun
+
+
+def _validate_upload_file(file: FileStorage) -> str:
+    """Убедиться, что объект файла пригоден для дальнейшей обработки."""
+    if not file or not file.filename:
+        raise ValueError("Файл отсутствует или поврежден.")
+    return file.filename
+
+
+def _read_file_content(file: FileStorage) -> bytes:
+    """Считывает и валидирует содержимое файла."""
+    file.seek(0)
+    content = file.read()
+    if not content:
+        raise ValueError(f"Файл {file.filename} пустой и не будет загружен.")
+    return content
+
+
+def _extract_stand_value(filename: str, file_content: bytes) -> Optional[str]:
+    """Пытается извлечь stand из environment.properties."""
+    if filename != "environment.properties":
+        return None
+
+    try:
+        content_text = file_content.decode("utf-8", errors="ignore")
+    except Exception:
+        logger.exception(
+            "Не удалось декодировать environment.properties для извлечения stand"
+        )
+        return None
+
+    stand = extract_stand_from_environment_file(content_text) or None
+    return stand.strip() if stand else None
+
+
+def _persist_detected_stand(run_name: str, detected_stand: str) -> None:
+    """Сохраняет значение stand в TestResult, если запись существует."""
+    try:
+        test_result: Optional[TestResult] = TestResult.query.filter_by(
+            run_name=run_name, is_deleted=False
+        ).first()
+        if not test_result:
+            logger.warning(
+                "Не удалось найти TestResult для run_name=%s, stand=%s не сохранён",
+                run_name,
+                detected_stand,
+            )
+            return
+
+        test_result.stand = detected_stand
+        db.session.add(test_result)
+        db.session.commit()
+        logger.info(
+            "Сохранили stand='%s' для run=%s в TestResult(id=%s)",
+            detected_stand,
+            run_name,
+            test_result.id,
+        )
+    except Exception:
+        logger.exception(
+            "Ошибка при сохранении stand=%s для run=%s в базе данных",
+            detected_stand,
+            run_name,
+        )
+
+
+def _upload_file_to_minio(run_name: str, filename: str, file_content: bytes) -> None:
+    """Загружает файл в MinIO."""
+    file_path = f"{run_name}/{filename}"
+    file_stream = io.BytesIO(file_content)
+    minio_client.ensure_bucket_exists(const.ALLURE_RESULTS_BUCKET_NAME)
+    minio_client.put_object(
+        bucket_name=const.ALLURE_RESULTS_BUCKET_NAME,
+        file_path=file_path,
+        file_stream=file_stream,
+        content_length=len(file_content),
+    )
+
+
+def _safe_int(value: Optional[int]) -> Optional[int]:
+    """Безопасно преобразует значение к int."""
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _status_indicates_failure(status: Optional[str]) -> bool:
+    """Возвращает True, если значение статуса сигнализирует о неуспехе."""
+    if not status:
+        return False
+    return str(status).lower() != const.STATUS_PASS
+
+
+def _steps_contain_failure(steps: Optional[Sequence[dict]]) -> bool:
+    """Рекурсивно проверяет шаги на наличие статусов отличных от passed."""
+    if not steps:
+        return False
+
+    for step in steps:
+        if _status_indicates_failure(step.get(const.STATUS_KEY)):
+            return True
+        if _steps_contain_failure(step.get("steps")):
+            return True
+    return False
+
+
+def _result_contains_failure(data: dict) -> bool:
+    """Проверяет результат теста на наличие любых неуспешных статусов."""
+    if _status_indicates_failure(data.get(const.STATUS_KEY)):
+        return True
+
+    if _steps_contain_failure(data.get("steps")):
+        return True
+
+    for section in ("befores", "afters"):
+        for entry in data.get(section, []):
+            if _status_indicates_failure(entry.get(const.STATUS_KEY)):
+                return True
+            if _steps_contain_failure(entry.get("steps")):
+                return True
+
+    return False
+
+
+def allowed_file(filename: str) -> bool:
     """
     По точке находим расширение файла и проверяем на соответствие списка разрешенных в ALLOWED_EXTENSIONS
     """
@@ -33,94 +226,30 @@ def allowed_file(filename):
     )
 
 
-def process_and_upload_file(run_name, file):
+def process_and_upload_file(run_name: str, file: FileStorage) -> str:
+    """
+    Валидирует, обрабатывает и загружает файл в MinIO.
+    Пытается извлечь stand из environment.properties и сохранить его в БД.
+    """
     try:
-        filename = file.filename
-        file_path = f"{run_name}/{filename}"
+        filename = _validate_upload_file(file)
+        logger.info("Тип файла: %s, имя файла: %s", type(file), filename)
 
-        # Убедимся, что файл доступен, и логируем его имя
-        if not file or not filename:
-            logger.error("Файл отсутствует или поврежден.")
-            return
+        file_content = _read_file_content(file)
+        logger.info("Размер файла %s: %s байт", filename, len(file_content))
 
-        # Подтверждаем тип содержимого
-        logger.info(f"Тип файла: {type(file)}, имя файла: {filename}")
-
-        # Считываем файл
-        file.seek(0)
-        file_content = file.read()
-        if not file_content:
-            logger.error(f"Файл {filename} пустой! и не будет загружен.")
-            return
-
-        # Если файл называется environment.properties,
-        # пытаемся извлечь значение 'stand' (без записи на диск).
-        # Сохраняем в локальную переменную detected_stand для дальнейшего присвоения в БД.
-        detected_stand: Optional[str] = None
-        try:
-            if filename == "environment.properties":
-                # file_content может быть bytes или str — приводим к str
-                if isinstance(file_content, (bytes, bytearray)):
-                    content_text = file_content.decode("utf-8", errors="ignore")
-                else:
-                    content_text = str(file_content)
-                detected_stand = extract_stand_from_environment_file(content_text)
-                if detected_stand:
-                    detected_stand = detected_stand.strip()
-                    logger.info(
-                        "Обнаружен stand='%s' в присланном environment.properties для run=%s",
-                        detected_stand,
-                        run_name,
-                    )
-        except Exception:
-            # Не критично — логируем и продолжаем обработку (не блокируем загрузку файла).
-            logger.exception(
-                "Не удалось извлечь 'stand' из присланного environment.properties"
+        detected_stand = _extract_stand_value(filename, file_content)
+        if detected_stand:
+            logger.info(
+                "Обнаружен stand='%s' в environment.properties для run=%s",
+                detected_stand,
+                run_name,
             )
 
-        content_length = len(file_content)
-        logger.info(f"Размер файла {filename}: {content_length} байт")
+        _upload_file_to_minio(run_name, filename, file_content)
 
-        # Оборачиваем файл в BytesIO для повторной передачи
-        file_stream = io.BytesIO(file_content)
-
-        # Убеждаемся, что бакет существует
-        minio_client.ensure_bucket_exists(const.ALLURE_RESULTS_BUCKET_NAME)
-
-        # Загрузка файла в MinIO
-        minio_client.put_object(
-            bucket_name=const.ALLURE_RESULTS_BUCKET_NAME,
-            file_path=file_path,
-            file_stream=file_stream,
-            content_length=content_length,
-        )
         if detected_stand:
-            try:
-                test_result: Optional[TestResult] = TestResult.query.filter_by(
-                    run_name=run_name, is_deleted=False
-                ).first()
-                if test_result:
-                    test_result.stand = detected_stand
-                    db.session.add(test_result)
-                    db.session.commit()
-                    logger.info(
-                        "Сохранили stand='%s' для run=%s в TestResult(id=%s)",
-                        detected_stand,
-                        run_name,
-                        test_result.id,
-                    )
-                else:
-                    logger.warning(
-                        "Не удалось найти TestResult для run_name=%s, stand=%s не сохранён",
-                        run_name,
-                        detected_stand,
-                    )
-            except Exception:
-                logger.exception(
-                    "Ошибка при сохранении stand=%s для run=%s в базе данных",
-                    detected_stand,
-                    run_name,
-                )
+            _persist_detected_stand(run_name, detected_stand)
 
         return filename
 
@@ -129,8 +258,8 @@ def process_and_upload_file(run_name, file):
         raise
 
 
-def parse_json_file(file):
-    """Парсит содержимое файла и возвращает JSON данные."""
+def parse_json_file(file: Any) -> Optional[dict]:
+    """Парсит содержимое файла и возвращает json данные."""
     try:
         content = file.read().decode(const.ENCODING)
         return json.loads(content)
@@ -139,14 +268,16 @@ def parse_json_file(file):
         return None
 
 
-def format_timestamp(timestamp):
+def format_timestamp(timestamp: int) -> str:
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
     return datetime.datetime.fromtimestamp(
         timestamp / const.TIMESTAMP_DIVISOR
     ).strftime(const.DB_DATE_FORMAT)
 
 
-def check_all_tests_passed_run(files):
+def check_all_tests_passed_run(
+    files: Sequence[FileStorage],
+) -> dict[str, Optional[str]]:
     """
     Проверяет, прошли ли все автотесты успешно, и возвращает статус,
     а также время начала и окончания выполнения тестов.
@@ -164,7 +295,7 @@ def check_all_tests_passed_run(files):
 
     Возвращает:
         dict: Словарь с ключами и значениями:
-            - const.STATUS_KEY: Статус выполнения тестов ('success' или 'fail').
+            - const.STATUS_KEY: Статус выполнения тестов ('passed' или 'fail').
             - const.START_RUN_KEY: Время начала выполнения тестов в строковом формате
               (или None, если время не определено).
             - const.STOP_RUN_KEY: Время окончания выполнения тестов в строковом формате
@@ -181,54 +312,57 @@ def check_all_tests_passed_run(files):
         - Конвертирует временные метки в строковый формат.
         - Возвращает словарь с итоговыми данными.
     """
-    # Инициализируем переменную статуса теста(ов)
     status = const.STATUS_PASS
-    # Инициализируем переменные для хранения времени начала и окончания запуска автотестов
-    start_time, stop_time = None, None
-
     logger.info("Проверка статусов автотестов внутри данного отчета")
 
-    # Инициализируем временные переменные для поиска минимального start и максимального stop
-    result_start_times = []
-    result_stop_times = []
+    result_start_times: list[int] = []
+    result_stop_times: list[int] = []
+    container_start_ms: Optional[int] = None
+    container_stop_ms: Optional[int] = None
 
-    # Итерация по списку файлов для анализа их содержимого
-    container_data_exists = False
     for file in files:
-        # Обработка файлов с результатами выполнения тестов
-        if file.filename.endswith(const.RESULT_NAMING):
+        filename = getattr(file, "filename", "") or ""
+        if filename.endswith(const.RESULT_NAMING):
             data = parse_json_file(file)
 
-            # Если данные отсутствуют или статус тестов не соответствует success - изменяем статус на fail
-            if not data or data.get(const.STATUS_KEY) != const.STATUS_PASS:
+            if not data:
                 status = const.STATUS_FAIL
+                logger.warning("Файл %s не содержит валидный JSON", filename)
+            else:
+                if _result_contains_failure(data):
+                    status = const.STATUS_FAIL
+                    logger.info("В файле %s обнаружены неуспешные шаги", filename)
 
-            # Проверяем наличие ключей времени начала и остановки, если данные валидны
-            if data:
-                start_time = data.get(const.START_RUN_KEY, start_time)
-                stop_time = data.get(const.STOP_RUN_KEY, stop_time)
+                start_ms = _safe_int(data.get(const.START_RUN_KEY))
+                stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
+                if start_ms is not None:
+                    result_start_times.append(start_ms)
+                if stop_ms is not None:
+                    result_stop_times.append(stop_ms)
 
-        # Обработка контейнерного файла (если он присутствует)
-        elif file.filename.endswith(const.CONTAINER_NAMING):
+        elif filename.endswith(const.CONTAINER_NAMING):
             data = parse_json_file(file)
-            # Если данные существуют в контейнере, устанавливаем start_time и stop_time
             if data:
-                container_data_exists = True
-                start_time = data.get(const.START_RUN_KEY)
-                stop_time = data.get(const.STOP_RUN_KEY)
+                container_start_ms = _safe_int(data.get(const.START_RUN_KEY))
+                container_stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
 
-    # Если контейнерный файл отсутствует, используем данные из result.json
-    if not container_data_exists:
-        if result_start_times:
-            start_time = int(min(result_start_times))
-        if result_stop_times:
-            stop_time = int(max(result_stop_times))
+    if container_start_ms is None and result_start_times:
+        container_start_ms = min(result_start_times)
+    if container_stop_ms is None and result_stop_times:
+        container_stop_ms = max(result_stop_times)
 
-    # Конвертируем время из миллисекунд в строковый формат
-    start_time_str = format_timestamp(start_time) if start_time else None
-    stop_time_str = format_timestamp(stop_time) if stop_time else None
+    start_time_str = (
+        format_timestamp(container_start_ms) if container_start_ms else None
+    )
+    stop_time_str = format_timestamp(container_stop_ms) if container_stop_ms else None
 
-    # Возвращаем результат времени начала и окончания тестирования
+    logger.info(
+        "Итоговый статус тестов: %s, start=%s, stop=%s",
+        status,
+        start_time_str,
+        stop_time_str,
+    )
+
     return {
         const.STATUS_KEY: status,
         const.START_RUN_KEY: start_time_str,
@@ -284,7 +418,7 @@ def create_temporary_test_result():
         raise
 
 
-def update_test_result(new_result, test_run_info):
+def update_test_result(new_result: "TestResult", test_run_info: dict) -> None:
     """Обновляет параметры тестового запуска в БД."""
     run_id = new_result.id
     run_name = f"run_{run_id}_{test_run_info.get(const.START_RUN_KEY)}"
@@ -295,7 +429,7 @@ def update_test_result(new_result, test_run_info):
     db.session.commit()
 
 
-def check_files_size(files, max_size=None):
+def check_files_size(files, max_size=None) -> bool:
     """
     Проверка размера загружаемых файлов.
     files - список файлов для проверки.
@@ -358,7 +492,7 @@ def fetch_reports():
     ]
 
 
-def log_reports(results):
+def log_reports(results: List[Dict[str, Any]]) -> None:
     """
     Логирует информацию о состоянии списка отчетов
     """
@@ -371,7 +505,7 @@ def log_reports(results):
         )
 
 
-def generate_and_upload_report(run_name: str):
+def generate_and_upload_report(run_name: str) -> None:
     """
     Генерирует и загружает allure-report в MinIO.
     Аргумент run_name - название тест-рана, используемое для директории allure-result и allure-report.
@@ -394,7 +528,9 @@ def generate_and_upload_report(run_name: str):
         cleanup_temporary_directories([temp_dir, report_dir])
 
 
-def download_allure_results(allure_results_directory: str, destination_dir: str):
+def download_allure_results(
+    allure_results_directory: str, destination_dir: str
+) -> None:
     """
     Загружает результаты Allure из MinIO в указанную директорию.
     Аргументы:
@@ -409,11 +545,11 @@ def download_allure_results(allure_results_directory: str, destination_dir: str)
             const.ALLURE_RESULTS_BUCKET_NAME, obj.object_name, file_path
         )
         if os.path.exists(file_path):
-            print(
+            logger.info(
                 f"Файл {file_path} загружен, размер: {os.path.getsize(file_path)} байт"
             )
         else:
-            print(f"Ошибка: Файл {file_path} не загружен")
+            logger.error(f"Ошибка: Файл {file_path} не загружен")
 
 
 def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
@@ -446,7 +582,7 @@ def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
         raise RuntimeError("Не удалось сгенерировать Allure-отчёт") from error
 
 
-def upload_report_to_minio(run_name: str, report_dir: str):
+def upload_report_to_minio(run_name: str, report_dir: str) -> None:
     """
     Загружает HTML-отчёт Allure в MinIO.
     run_name - ммя тест-запуска для файла allure-report.
@@ -454,6 +590,7 @@ def upload_report_to_minio(run_name: str, report_dir: str):
     """
     final_report_file = os.path.join(report_dir, "index.html")
     with open(final_report_file, "rb") as file:
+        minio_client.ensure_bucket_exists(const.ALLURE_REPORTS_BUCKET_NAME)
         minio_client.put_object(
             const.ALLURE_REPORTS_BUCKET_NAME,
             f"{run_name}.html",
@@ -462,7 +599,7 @@ def upload_report_to_minio(run_name: str, report_dir: str):
         )
 
 
-def cleanup_temporary_directories(directories: list):
+def cleanup_temporary_directories(directories: list) -> None:
     """
     Удаляет указанные временные директории.
     """
@@ -472,7 +609,7 @@ def cleanup_temporary_directories(directories: list):
             logger.info(f"Временная директория {directory} удалена")
 
 
-def report_exists(run_name: str):
+def report_exists(run_name: str) -> bool:
     """
     Проверяет наличие отчёта Allure в хранилище MinIO.
 
@@ -490,7 +627,7 @@ def report_exists(run_name: str):
         return False
 
 
-def log_and_abort(result_id: int, testrun):
+def log_and_abort(result_id: int, testrun) -> None:
     """
     Логирование и окончание запроса, если тестран не существует или помечен как удаленный.
     """
