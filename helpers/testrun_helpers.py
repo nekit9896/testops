@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import flask
 from flask import abort
@@ -258,8 +258,8 @@ def process_and_upload_file(run_name: str, file: FileStorage) -> str:
         raise
 
 
-def parse_json_file(file):
-    """Парсит содержимое файла и возвращает JSON данные."""
+def parse_json_file(file: Any) -> Optional[dict]:
+    """Парсит содержимое файла и возвращает json данные."""
     try:
         content = file.read().decode(const.ENCODING)
         return json.loads(content)
@@ -268,14 +268,16 @@ def parse_json_file(file):
         return None
 
 
-def format_timestamp(timestamp):
+def format_timestamp(timestamp: int) -> str:
     """Форматирует временную метку в миллисекундах в строку по заданному формату."""
     return datetime.datetime.fromtimestamp(
         timestamp / const.TIMESTAMP_DIVISOR
     ).strftime(const.DB_DATE_FORMAT)
 
 
-def check_all_tests_passed_run(files: Sequence[FileStorage]):
+def check_all_tests_passed_run(
+    files: Sequence[FileStorage],
+) -> dict[str, Optional[str]]:
     """
     Проверяет, прошли ли все автотесты успешно, и возвращает статус,
     а также время начала и окончания выполнения тестов.
@@ -416,7 +418,7 @@ def create_temporary_test_result():
         raise
 
 
-def update_test_result(new_result, test_run_info):
+def update_test_result(new_result: "TestResult", test_run_info: dict) -> None:
     """Обновляет параметры тестового запуска в БД."""
     run_id = new_result.id
     run_name = f"run_{run_id}_{test_run_info.get(const.START_RUN_KEY)}"
@@ -427,7 +429,7 @@ def update_test_result(new_result, test_run_info):
     db.session.commit()
 
 
-def check_files_size(files, max_size=None):
+def check_files_size(files, max_size=None) -> bool:
     """
     Проверка размера загружаемых файлов.
     files - список файлов для проверки.
@@ -490,7 +492,7 @@ def fetch_reports():
     ]
 
 
-def log_reports(results):
+def log_reports(results: List[Dict[str, Any]]) -> None:
     """
     Логирует информацию о состоянии списка отчетов
     """
@@ -503,7 +505,7 @@ def log_reports(results):
         )
 
 
-def generate_and_upload_report(run_name: str):
+def generate_and_upload_report(run_name: str) -> None:
     """
     Генерирует и загружает allure-report в MinIO.
     Аргумент run_name - название тест-рана, используемое для директории allure-result и allure-report.
@@ -526,7 +528,9 @@ def generate_and_upload_report(run_name: str):
         cleanup_temporary_directories([temp_dir, report_dir])
 
 
-def download_allure_results(allure_results_directory: str, destination_dir: str):
+def download_allure_results(
+    allure_results_directory: str, destination_dir: str
+) -> None:
     """
     Загружает результаты Allure из MinIO в указанную директорию.
     Аргументы:
@@ -541,11 +545,11 @@ def download_allure_results(allure_results_directory: str, destination_dir: str)
             const.ALLURE_RESULTS_BUCKET_NAME, obj.object_name, file_path
         )
         if os.path.exists(file_path):
-            print(
+            logger.info(
                 f"Файл {file_path} загружен, размер: {os.path.getsize(file_path)} байт"
             )
         else:
-            print(f"Ошибка: Файл {file_path} не загружен")
+            logger.error(f"Ошибка: Файл {file_path} не загружен")
 
 
 def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
@@ -578,7 +582,7 @@ def generate_allure_report(result_dir_path: str, report_dir_path: str) -> None:
         raise RuntimeError("Не удалось сгенерировать Allure-отчёт") from error
 
 
-def upload_report_to_minio(run_name: str, report_dir: str):
+def upload_report_to_minio(run_name: str, report_dir: str) -> None:
     """
     Загружает HTML-отчёт Allure в MinIO.
     run_name - ммя тест-запуска для файла allure-report.
@@ -595,7 +599,7 @@ def upload_report_to_minio(run_name: str, report_dir: str):
         )
 
 
-def cleanup_temporary_directories(directories: list):
+def cleanup_temporary_directories(directories: list) -> None:
     """
     Удаляет указанные временные директории.
     """
@@ -605,7 +609,7 @@ def cleanup_temporary_directories(directories: list):
             logger.info(f"Временная директория {directory} удалена")
 
 
-def report_exists(run_name: str):
+def report_exists(run_name: str) -> bool:
     """
     Проверяет наличие отчёта Allure в хранилище MinIO.
 
@@ -623,7 +627,7 @@ def report_exists(run_name: str):
         return False
 
 
-def log_and_abort(result_id: int, testrun):
+def log_and_abort(result_id: int, testrun) -> None:
     """
     Логирование и окончание запроса, если тестран не существует или помечен как удаленный.
     """
