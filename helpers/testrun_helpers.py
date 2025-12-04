@@ -429,7 +429,7 @@ def update_test_result(new_result: "TestResult", test_run_info: dict) -> None:
     db.session.commit()
 
 
-def check_files_size(files, max_size=None) -> bool:
+def check_files_size(files: List, max_size: int = None) -> bool:
     """
     Проверка размера загружаемых файлов.
     files - список файлов для проверки.
@@ -515,7 +515,7 @@ def fetch_reports(
     direction: 'next' (старее) или 'prev' (новее).
     """
     if direction not in {"next", "prev"}:
-        raise ValueError("direction must be either 'next' or 'prev'")
+        raise ValueError("Направление должно быть либо 'next' или 'prev'")
 
     base_query = TestResult.query.filter_by(is_deleted=False)
     if cursor:

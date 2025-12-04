@@ -11,11 +11,11 @@
     <div class="flex items-center gap-3">
       <button id="reports-prev"
               class="px-4 py-2 text-sm font-medium bg-gray-200 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed">
-        Новее
+        ▲
       </button>
       <button id="reports-next"
-              class="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded disabled:opacity-50 disabled:cursor-not-allowed">
-        Старее
+              class="px-4 py-2 text-sm font-medium bg-gray-200 text-gray-700 rounded disabled:opacity-50 disabled:cursor-not-allowed">
+        ▼
       </button>
     </div>
   </div>
@@ -32,7 +32,7 @@
           <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Финиш</th>
           <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Окружение</th>
           <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Статус</th>
-          <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Действие</th>
+          <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider"></th>
         </tr>
       </thead>
       <tbody id="reports-body" class="divide-y divide-gray-100 bg-white">
@@ -55,9 +55,14 @@
   <script defer>
     document.addEventListener('DOMContentLoaded', function () {
       const container = document.querySelector('section[data-page-limit]');
+      const limitAttr =
+        container && container.dataset
+          ? Number(container.dataset.pageLimit)
+          : null;
+      const resolvedLimit = limitAttr || 20;
       window.reportsPage = new ReportsPage({
         dataUrl: "{{ url_for('routes.get_reports_data') }}",
-        limit: Number(container?.dataset.pageLimit) || {{ page_limit or 20 }}
+        limit: resolvedLimit
       });
     });
   </script>

@@ -102,10 +102,11 @@ class ReportsPage {
     this.showMessage("", false);
     const rows = items
       .map((item) => {
+        const statusValue = (item.status || "").toLowerCase();
         const statusClass =
-          item.status?.toLowerCase() === "fail"
+          statusValue === "fail"
             ? "text-red-600"
-            : item.status?.toLowerCase() === "passed"
+            : statusValue === "passed"
             ? "text-green-600"
             : "text-gray-800";
         return `
