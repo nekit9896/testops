@@ -83,9 +83,30 @@ def get_reports():
     """
     Возвращает страницу со списком отчетов
     """
-    results = testrun_helpers.fetch_reports()
-    testrun_helpers.log_reports(results)
-    return flask.render_template(const.TEMPLATE_REPORTS, results=results)
+    return flask.render_template(
+        const.TEMPLATE_REPORTS, page_limit=const.REPORTS_PAGE_LIMIT
+    )
+
+
+@bp.route("/reports/data", methods=["GET"])
+def get_reports_data():
+    """
+    Возвращает данные отчетов с курсорной пагинацией (JSON).
+    """
+    cursor = flask.request.args.get("cursor", type=int)
+    direction = flask.request.args.get("direction", default="next", type=str).lower()
+    limit = flask.request.args.get("limit", default=const.REPORTS_PAGE_LIMIT, type=int)
+    limit = max(1, min(limit, 100))
+
+    try:
+        data = testrun_helpers.fetch_reports(
+            cursor=cursor, limit=limit, direction=direction
+        )
+    except ValueError as exc:
+        flask.abort(400, description=str(exc))
+
+    testrun_helpers.log_reports(bool(data["items"]))
+    return flask.jsonify(data)
 
 
 @bp.route("/reports/<int:result_id>", methods=["GET"])
