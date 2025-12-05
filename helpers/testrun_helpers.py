@@ -479,6 +479,67 @@ def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
     }
 
 
+def _normalize_filter_values(values: Optional[Sequence[str]]) -> List[str]:
+    """Подготавливает список значений для безопасного использования в запросах."""
+    if not values:
+        return []
+
+    normalized: List[str] = []
+    seen = set()
+
+    for value in values:
+        if value is None:
+            continue
+        cleaned = str(value).strip()
+        if not cleaned or cleaned == "-":
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        normalized.append(cleaned)
+
+    return normalized
+
+
+def _collect_distinct_column_values(column) -> List[str]:
+    """Возвращает уникальные значения столбца для не удалённых записей."""
+    rows = (
+        db.session.query(column)
+        .filter(
+            TestResult.is_deleted.is_(False),
+            column.isnot(None),
+            column != "",
+            column != "-",
+        )
+        .distinct()
+        .order_by(column.asc())
+        .all()
+    )
+
+    values: List[str] = []
+    seen = set()
+    for (value,) in rows:
+        if value is None:
+            continue
+        cleaned = value.strip() if isinstance(value, str) else value
+        if not cleaned or cleaned == "-":
+            continue
+        if cleaned in seen:
+            continue
+        seen.add(cleaned)
+        values.append(cleaned)
+
+    return values
+
+
+def _get_available_report_filters() -> Dict[str, List[str]]:
+    """Формирует справочник доступных фильтров для отчётов."""
+    return {
+        "statuses": _collect_distinct_column_values(TestResult.status),
+        "stands": _collect_distinct_column_values(TestResult.stand),
+    }
+
+
 def _has_older_runs(oldest_id: int) -> bool:
     """Проверяет наличие более старых записей по id."""
     return (
@@ -509,13 +570,20 @@ def fetch_reports(
     cursor: Optional[int],
     limit: int,
     direction: str = "next",
+    statuses: Optional[Sequence[str]] = None,
+    stands: Optional[Sequence[str]] = None,
 ) -> Dict[str, Any]:
     """
     Возвращает страницу отчетов с курсорной пагинацией.
     direction: 'next' (старее) или 'prev' (новее).
+    statuses/stands — списки значений для фильтрации (множество значений).
     """
     if direction not in {"next", "prev"}:
         raise ValueError("Направление должно быть либо 'next' или 'prev'")
+
+    available_filters = _get_available_report_filters()
+    normalized_statuses = _normalize_filter_values(statuses)
+    normalized_stands = _normalize_filter_values(stands)
 
     base_query = TestResult.query.filter_by(is_deleted=False)
     if cursor:
@@ -523,6 +591,11 @@ def fetch_reports(
             base_query = base_query.filter(TestResult.id < cursor)
         else:
             base_query = base_query.filter(TestResult.id > cursor)
+
+    if normalized_statuses:
+        base_query = base_query.filter(TestResult.status.in_(normalized_statuses))
+    if normalized_stands:
+        base_query = base_query.filter(TestResult.stand.in_(normalized_stands))
 
     order_column = TestResult.id.desc()
     if direction == "prev":
@@ -544,6 +617,7 @@ def fetch_reports(
             "prev_cursor": None,
             "has_next": False,
             "has_prev": False,
+            "filters": available_filters,
         }
 
     newest_id = items[0].id
@@ -566,6 +640,7 @@ def fetch_reports(
         "prev_cursor": newest_id if has_prev else None,
         "has_next": has_next,
         "has_prev": has_prev,
+        "filters": available_filters,
     }
 
 
