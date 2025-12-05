@@ -287,12 +287,12 @@ class ReportsPage {
           const selected = this.filters[key] || [];
           const isChecked = selected.includes(value);
           return `
-            <label class="flex items-center gap-2 text-sm text-gray-700" for="${inputId}">
+            <label class="flex items-center gap-2 text-xs text-gray-700" for="${inputId}">
               <input id="${inputId}"
-                     type="checkbox"
-                     value="${safeValue}"
-                     class="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500"
-                     ${isChecked ? "checked" : ""}>
+                    type="checkbox"
+                    value="${safeValue}"
+                    class="h-3 w-3 rounded border-indigo-600 text-indigo-600 accent-indigo-600 focus:ring-indigo-500"
+                    ${isChecked ? "checked" : ""}>
               <span class="truncate" title="${safeValue}">${safeValue}</span>
             </label>`;
         })

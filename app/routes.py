@@ -98,30 +98,8 @@ def get_reports_data():
     limit = flask.request.args.get("limit", default=const.REPORTS_PAGE_LIMIT, type=int)
     limit = max(1, min(limit, 100))
 
-    def _extract_filter_values(param_name: str) -> List[str]:
-        values = flask.request.args.getlist(param_name)
-        if not values:
-            values = flask.request.args.getlist(f"{param_name}[]")
-
-        if len(values) == 1 and "," in (values[0] or ""):
-            values = [chunk.strip() for chunk in values[0].split(",")]
-
-        cleaned: List[str] = []
-        seen = set()
-        for value in values:
-            if value is None:
-                continue
-            candidate = value.strip()
-            if not candidate or candidate == "-":
-                continue
-            if candidate in seen:
-                continue
-            seen.add(candidate)
-            cleaned.append(candidate)
-        return cleaned
-
-    statuses = _extract_filter_values("status")
-    stands = _extract_filter_values("stand")
+    statuses = testrun_helpers.extract_filter_values("status")
+    stands = testrun_helpers.extract_filter_values("stand")
 
     try:
         data = testrun_helpers.fetch_reports(

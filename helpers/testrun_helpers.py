@@ -479,6 +479,34 @@ def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
     }
 
 
+def extract_filter_values(param_name: str) -> List[str]:
+    """
+    Возвращает очищенный список значений фильтра из query string.
+    Удаляет прочерки и пустые значения, поддерживает нотации name и name[].
+    """
+    values = flask.request.args.getlist(param_name)
+    if not values:
+        values = flask.request.args.getlist(f"{param_name}[]")
+
+    if len(values) == 1 and "," in (values[0] or ""):
+        values = [chunk.strip() for chunk in values[0].split(",")]
+
+    cleaned: List[str] = []
+    seen = set()
+    for value in values:
+        if value is None:
+            continue
+        candidate = value.strip()
+        if not candidate or candidate == "-":
+            continue
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        cleaned.append(candidate)
+
+    return cleaned
+
+
 def _normalize_filter_values(values: Optional[Sequence[str]]) -> List[str]:
     """Подготавливает список значений для безопасного использования в запросах."""
     if not values:
