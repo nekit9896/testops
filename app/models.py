@@ -1,4 +1,5 @@
 import uuid
+from pathlib import Path
 
 import sqlalchemy as sqlalchemy
 from sqlalchemy.ext.associationproxy import association_proxy
@@ -113,7 +114,13 @@ class Attachment(db.Model):
         Генерирует уникальное имя объекта для хранения в MinIO.
         Формат: testcases/<test_case_id>/<uuid4hex>_<secure_filename>
         """
-        safe = secure_filename(filename) or "file"
+        # secure_filename удаляет не-ASCII, поэтому для кириллицы и других юникод-имен
+        # добавляем безопасный fallback с сохранением расширения
+        safe = secure_filename(filename or "") or ""
+        if not safe or safe in {".", ".."}:
+            ext = Path(filename or "").suffix
+            base = "file"
+            safe = f"{base}{ext}" if ext else base
         return f"testcases/{test_case_id}/{uuid.uuid4().hex}_{safe}"
 
 
