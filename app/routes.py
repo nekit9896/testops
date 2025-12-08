@@ -98,9 +98,16 @@ def get_reports_data():
     limit = flask.request.args.get("limit", default=const.REPORTS_PAGE_LIMIT, type=int)
     limit = max(1, min(limit, 100))
 
+    statuses = testrun_helpers.extract_filter_values("status")
+    stands = testrun_helpers.extract_filter_values("stand")
+
     try:
         data = testrun_helpers.fetch_reports(
-            cursor=cursor, limit=limit, direction=direction
+            cursor=cursor,
+            limit=limit,
+            direction=direction,
+            statuses=statuses,
+            stands=stands,
         )
     except ValueError as exc:
         flask.abort(400, description=str(exc))
