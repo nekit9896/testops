@@ -15,7 +15,9 @@ import app.models as models
 from app import db
 from app.clients import MinioClient
 from constants import ASCII_CODING, ENCODING, TESTCASE_PER_PAGE_LIMIT
+from logger import init_logger
 
+logger = init_logger()
 minio_client = MinioClient()
 
 
@@ -59,6 +61,40 @@ def _ensure_list(value: Optional[Iterable]) -> List:
     которые могут быть опущены в запросе.
     """
     return list(value) if value is not None else []
+
+
+def _joinedload_case_relations():
+    """Сбор общих joinedload-опций для TestCase."""
+    return (
+        joinedload(models.TestCase.tags),
+        joinedload(models.TestCase.steps),
+        joinedload(models.TestCase.suite_links).joinedload(models.TestCaseSuite.suite),
+    )
+
+
+def _load_test_case(
+    test_case_id: int, *, include_deleted: bool = False
+) -> Optional[models.TestCase]:
+    """Единая точка загрузки TestCase с нужными связями."""
+    query = models.TestCase.query.options(*_joinedload_case_relations())
+    tc = query.get(test_case_id)
+    if not tc:
+        return None
+    if tc.is_deleted and not include_deleted:
+        return None
+    return tc
+
+
+def get_test_case_or_none(
+    test_case_id: int, *, include_deleted: bool = False
+) -> Optional[models.TestCase]:
+    """
+    Публичный helper для роутов/сервисов: возвращает TestCase или None.
+    Не бросает исключения, только фильтрует по include_deleted.
+    """
+    if not isinstance(test_case_id, int) or test_case_id <= 0:
+        return None
+    return _load_test_case(test_case_id, include_deleted=include_deleted)
 
 
 def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -302,9 +338,6 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                     continue
                 tag = _get_or_create_tag(normalized)
                 if tag is None:
-                    logger = __import__(
-                        "logger"
-                    ).init_logger()  # аккуратно получить логгер без циклических импортов
                     logger.warning(
                         f"Тег, на который ссылается id={normalized.get('id')} не найден — пропускаем, "
                         f"тэги не обязательны"
@@ -349,9 +382,6 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                 normalized = _normalize_suite_input(raw_sl)
                 suite = _get_or_create_suite(normalized)
                 if suite is None:
-                    # Если клиент указал suite_id, которого нет — пропускаем и логируем.
-                    # Логер берём аккуратно, чтобы не было циклических импортов.
-                    logger = __import__("logger").init_logger()
                     logger.warning(
                         f"TestSuite, на который ссылается id={normalized.get('suite_id')} не найден — "
                         f"пропускаем, для тест кейсов не обязательны сьюты"
@@ -637,22 +667,12 @@ def get_test_case_by_id(
     if not isinstance(test_case_id, int) or test_case_id <= 0:
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
-    # Используем joinedload, чтобы сразу подгрузить все нужные связи и избежать N+1
-    query = models.TestCase.query.options(
-        joinedload(models.TestCase.steps),
-        joinedload(models.TestCase.tags),
-        joinedload(models.TestCase.suite_links).joinedload(models.TestCaseSuite.suite),
-    )
-
-    # Получаем объект
-    test_case = query.get(test_case_id)
-
+    test_case = _load_test_case(test_case_id, include_deleted=include_deleted)
     if not test_case:
-        raise NotFoundError(f"TestCase с id={test_case_id} не найден")
-
-    # Если найден, но помечен как удалённый — по умолчанию скрываем
-    if test_case.is_deleted and not include_deleted:
-        raise NotFoundError(f"TestCase с id={test_case_id} удален")
+        raise NotFoundError(
+            f"TestCase с id={test_case_id} "
+            f"{'удален' if include_deleted is False else 'не найден'}"
+        )
 
     return test_case
 
@@ -668,8 +688,6 @@ def _transaction_context():
     до входа в этот контекст (например db.session.get_bind(), db.session.connection()
     или любые SELECT), т.к. они вызовут implicit BEGIN.
     """
-    logger = __import__("logger").init_logger()
-
     # Определяем, кажется ли сессия уже в транзакции (без побочных эффектов).
     try:
         session_in_transaction = bool(
@@ -735,21 +753,11 @@ def update_test_case_from_payload(
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
     normalized = _validate_basic_fields(payload)
-    logger = __import__("logger").init_logger()
-
     try:
         # Контекст-менеджер гарантирует commit/rollback. Входим в транзакцию прежде, чем делать SELECT/UPDATE/INSERT
         with _transaction_context():
-            # Получаем текущий объект внутри транзакции (важное изменение)
-            tc = models.TestCase.query.options(
-                joinedload(models.TestCase.steps),
-                joinedload(models.TestCase.tags),
-                joinedload(models.TestCase.suite_links).joinedload(
-                    models.TestCaseSuite.suite
-                ),
-            ).get(test_case_id)
-
-            if not tc or tc.is_deleted:
+            tc = _load_test_case(test_case_id, include_deleted=False)
+            if not tc:
                 raise NotFoundError(f"TestCase with id={test_case_id} not found")
 
             # сохраняем старые suite_ids до удаления связей
@@ -909,19 +917,9 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
     if not isinstance(test_case_id, int) or test_case_id <= 0:
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
-    logger = __import__("logger").init_logger()
-
     try:
         with _transaction_context():
-            # Загружаем объект внутри транзакции
-            tc = models.TestCase.query.options(
-                joinedload(models.TestCase.steps),
-                joinedload(models.TestCase.tags),
-                joinedload(models.TestCase.suite_links).joinedload(
-                    models.TestCaseSuite.suite
-                ),
-            ).get(test_case_id)
-
+            tc = _load_test_case(test_case_id, include_deleted=True)
             if not tc:
                 raise NotFoundError(f"TestCase with id={test_case_id} not found")
 
