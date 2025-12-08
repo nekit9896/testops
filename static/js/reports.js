@@ -1,5 +1,12 @@
+/**
+ * ReportsPage инкапсулирует всю логику курсовой пагинации:
+ *  - хранит курсоры "новые"/"старые"
+ *  - рисует строки таблицы
+ *  - управляет кнопками и сообщениями об ошибках
+ */
 class ReportsPage {
   constructor({ dataUrl, limit }) {
+    // REST endpoint и лимит записей берутся из data-атрибутов шаблона
     this.dataUrl = dataUrl;
     this.limit = limit;
     this.state = {
@@ -65,6 +72,7 @@ class ReportsPage {
   }
 
   bindEvents() {
+    // "▲" — листаем к более новым записям
     if (this.prevButton) {
       this.prevButton.addEventListener("click", () => {
         if (this.state.prevCursor) {
@@ -73,6 +81,7 @@ class ReportsPage {
       });
     }
 
+    // "▼" — листаем к более старым записям
     if (this.nextButton) {
       this.nextButton.addEventListener("click", () => {
         if (this.state.nextCursor) {
@@ -190,6 +199,9 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Показывает/скрывает индикатор загрузки и блокирует кнопки на время запроса.
+   */
   setLoading(isLoading) {
     if (this.loadingIndicator) {
       this.loadingIndicator.classList.toggle("hidden", !isLoading);
@@ -201,6 +213,10 @@ class ReportsPage {
     });
   }
 
+  /**
+   * Загружает очередную страницу отчётов.
+   * cursor=null означает стартовую страницу (последние записи).
+   */
   buildQueryParams({ cursor, direction }) {
     const params = new URLSearchParams({ limit: this.limit, direction });
     if (cursor) {
@@ -239,6 +255,9 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Сохраняет курсоры и актуализирует активность кнопок списка.
+   */
   updateState({ next_cursor, prev_cursor, has_next, has_prev }) {
     this.state.nextCursor = next_cursor;
     this.state.prevCursor = prev_cursor;
@@ -253,6 +272,10 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Перерисовывает тело таблицы.
+   * При пустом списке показываем дружелюбное сообщение.
+   */
   updateAvailableFilters(filtersPayload) {
     const payload =
       filtersPayload && typeof filtersPayload === "object" ? filtersPayload : {};
@@ -390,6 +413,9 @@ class ReportsPage {
     );
   }
 
+  /**
+   * Управляет строкой сообщения под заголовком (ошибки, пустой список и т.п.).
+   */
   showMessage(text, isError) {
     if (!this.message) {
       return;
@@ -447,4 +473,3 @@ class ReportsPage {
     this.tableWrapper.style.minHeight = `${Math.ceil(targetHeight)}px`;
   }
 }
-

@@ -53,7 +53,7 @@ def extract_test_run_info(files: Sequence[FileStorage]):
         test_run_info = check_all_tests_passed_run(files)
         if not test_run_info:
             logger.error("Не удалось извлечь параметры тестрана")
-            flask.abort(400, description="Ошибка анализа файлов")
+            flask.abort(400, description="Ошибка анализа файлов тестрана")
         return test_run_info
     except Exception as error_msg:
         logger.exception("Неизвестная ошибка при анализе тестрана")
@@ -96,6 +96,7 @@ def get_existing_run_or_abort(result_id: int) -> TestResult:
 def _validate_upload_file(file: FileStorage) -> str:
     """Убедиться, что объект файла пригоден для дальнейшей обработки."""
     if not file or not file.filename:
+        logger.error("Загружен пустой или поврежденный файл")
         raise ValueError("Файл отсутствует или поврежден.")
     return file.filename
 
@@ -239,16 +240,15 @@ def process_and_upload_file(run_name: str, file: FileStorage) -> str:
         logger.info("Размер файла %s: %s байт", filename, len(file_content))
 
         detected_stand = _extract_stand_value(filename, file_content)
+
+        _upload_file_to_minio(run_name, filename, file_content)
+
         if detected_stand:
             logger.info(
                 "Обнаружен stand='%s' в environment.properties для run=%s",
                 detected_stand,
                 run_name,
             )
-
-        _upload_file_to_minio(run_name, filename, file_content)
-
-        if detected_stand:
             _persist_detected_stand(run_name, detected_stand)
 
         return filename
@@ -429,7 +429,7 @@ def update_test_result(new_result: "TestResult", test_run_info: dict) -> None:
     db.session.commit()
 
 
-def check_files_size(files: List, max_size: int = None) -> bool:
+def check_files_size(files: list, max_size: int = None) -> bool:
     """
     Проверка размера загружаемых файлов.
     files - список файлов для проверки.
@@ -607,6 +607,7 @@ def fetch_reports(
     statuses/stands — списки значений для фильтрации (множество значений).
     """
     if direction not in {"next", "prev"}:
+        logger.error(f"Получение некорректное направление пагинации: {direction}")
         raise ValueError("Направление должно быть либо 'next' или 'prev'")
 
     available_filters = _get_available_report_filters()

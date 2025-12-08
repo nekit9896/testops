@@ -5,6 +5,10 @@
 {% endblock %}
 
 {% block main %}
+<!--
+    Карточка со списком отчетов: содержит заголовок, навигационные кнопки и таблицу.
+    data-page-limit используется js виджетом для запросов нужного количества записей
+-->
 <section class="bg-white rounded-lg shadow p-6 space-y-4" data-page-limit="{{ page_limit or 20 }}">
   <div class="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
     <h2 class="text-2xl font-semibold text-gray-900">Доступные отчёты</h2>
@@ -102,6 +106,7 @@
 
 {% block scripts %}
   {{ super() }}
+  <!-- Загрузка данных и управление таблицей -->
   <script src="{{ url_for('static', filename='js/reports.js') }}" defer></script>
   <script defer>
     document.addEventListener('DOMContentLoaded', function () {
