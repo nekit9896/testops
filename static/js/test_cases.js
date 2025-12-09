@@ -349,6 +349,90 @@
       }
     });
 
+    searchInput.addEventListener("input", function () {
+      renderList(this.value || "");
+    });
+
+    async function applyAndNavigate() {
+      const arr = Array.from(selected);
+      hidden.value = arr.join(",");
+      const params = new URLSearchParams(window.location.search);
+      if (arr.length) params.set("tags", arr.join(","));
+      else params.delete("tags");
+      params.delete("cursor");
+
+      const targetUrl =
+        window.location.pathname + "?" + params.toString();
+
+      try {
+        const res = await fetch(targetUrl, { credentials: "same-origin" });
+        if (!res.ok) {
+          throw new Error(`Request failed: ${res.status}`);
+        }
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+
+        const incomingTbody = doc.querySelector("#cases-tbody");
+        const incomingMeta = doc.querySelector("#meta-count");
+        const incomingPrev = doc.querySelector("#prev-link");
+        const incomingNext = doc.querySelector("#next-link");
+        const incomingHidden = doc.querySelector("#tags-hidden");
+
+        const tbody = document.querySelector("#cases-tbody");
+        if (incomingTbody && tbody) {
+          tbody.innerHTML = incomingTbody.innerHTML;
+        }
+
+        const meta = document.querySelector("#meta-count");
+        if (incomingMeta && meta) {
+          meta.textContent = incomingMeta.textContent;
+        }
+
+        const prev = document.querySelector("#prev-link");
+        if (prev) {
+          if (incomingPrev && incomingPrev.href) {
+            prev.href = incomingPrev.href;
+            prev.classList.remove("hidden");
+          } else {
+            prev.remove();
+          }
+        } else if (incomingPrev && incomingPrev.href) {
+          // if prev link was absent, append near pagination container
+          const pag = document.querySelector("#pagination");
+          if (pag) {
+            pag.insertAdjacentElement("afterbegin", incomingPrev);
+          }
+        }
+
+        const next = document.querySelector("#next-link");
+        if (next) {
+          if (incomingNext && incomingNext.href) {
+            next.href = incomingNext.href;
+            next.classList.remove("hidden");
+          } else {
+            next.remove();
+          }
+        } else if (incomingNext && incomingNext.href) {
+          const pag = document.querySelector("#pagination");
+          if (pag) {
+            pag.insertAdjacentElement("beforeend", incomingNext);
+          }
+        }
+
+        // сохраняем hidden значение для будущих сабмитов формы
+        if (incomingHidden && hidden) {
+          hidden.value = incomingHidden.value || "";
+        }
+
+        window.history.replaceState({}, "", targetUrl);
+      } catch (err) {
+        console.error("Не удалось обновить список по тегам:", err);
+        // fallback — перезагрузить страницу
+        window.location.href = targetUrl;
+      }
+    }
+
     listEl.addEventListener("change", function (e) {
       const cb = e.target.closest(".tag-checkbox");
       if (!cb) return;
@@ -356,22 +440,13 @@
       if (cb.checked) selected.add(name);
       else selected.delete(name);
       updateSummary();
+      applyAndNavigate();
     });
 
-    searchInput.addEventListener("input", function () {
-      renderList(this.value || "");
-    });
-
-    applyBtn.addEventListener("click", function () {
-      const arr = Array.from(selected);
-      hidden.value = arr.join(",");
-      const params = new URLSearchParams(window.location.search);
-      if (arr.length) params.set("tags", arr.join(","));
-      else params.delete("tags");
-      // сбрасываем курсор пагинации при смене фильтра
-      params.delete("cursor");
-      window.location.search = params.toString();
-    });
+    // Не закрываем дропдаун при клике внутри
+    dropdown.addEventListener("click", (e) => e.stopPropagation());
+    listEl.addEventListener("click", (e) => e.stopPropagation());
+    searchInput.addEventListener("click", (e) => e.stopPropagation());
 
     clearBtn.addEventListener("click", function () {
       selected.clear();
@@ -397,6 +472,18 @@
     setupCreateForm();
     setupEditForm();
     setupAttachmentActions();
+
+    // Автоприменение для include_deleted и sort
+    document
+      .querySelectorAll("[data-auto-submit-filter]")
+      .forEach((el) => {
+        el.addEventListener("change", () => {
+          const form = el.closest("form");
+          if (form) {
+            form.submit();
+          }
+        });
+      });
   });
 })();
 

@@ -76,11 +76,9 @@
             </button>
 
             <div id="tags-dropdown" class="absolute right-0 mt-2 w-72 max-h-64 overflow-auto bg-white border rounded shadow-lg p-2 hidden z-50">
-              <input id="tags-search" type="search" placeholder="Поиск тегов..." class="w-full px-2 py-1 border rounded text-sm mb-2" />
-
-              <div class="mb-2 flex gap-2">
-                <button type="button" id="tags-apply" class="px-2 py-1 bg-blue-500 text-white rounded text-sm">Применить</button>
-                <button type="button" id="tags-clear" class="px-2 py-1 bg-gray-200 rounded text-sm">Очистить</button>
+              <div class="flex gap-2 mb-2">
+                <input id="tags-search" type="search" placeholder="Поиск тегов..." class="w-full px-2 py-1 border rounded text-sm" />
+                <button type="button" id="tags-clear" class="w-24 px-2 py-1 bg-gray-200 rounded text-sm">Сбросить</button>
               </div>
 
               <div id="tags-list" class="text-sm space-y-1">
@@ -101,10 +99,10 @@
 
           <div class="flex items-center gap-2 w-full">
             <label class="flex items-center gap-1 text-sm">
-              <input type="checkbox" name="include_deleted" value="1" {% if request.args.get('include_deleted') %}checked{% endif %}>
+              <input type="checkbox" name="include_deleted" value="1" data-auto-submit-filter {% if request.args.get('include_deleted') %}checked{% endif %}>
               <span class="text-sm text-gray-600">include_deleted</span>
             </label>
-            <select name="sort" class="px-2 py-1 border rounded bg-white text-sm">
+            <select name="sort" class="px-2 py-1 border rounded bg-white text-sm" data-auto-submit-filter>
               <option value="-created_at" {% if request.args.get('sort','-created_at') == '-created_at' %}selected{% endif %}>Сначала новые</option>
               <option value="created_at" {% if request.args.get('sort') == 'created_at' %}selected{% endif %}>Сначала старые</option>
             </select>
