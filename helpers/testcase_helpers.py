@@ -914,6 +914,7 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
       - Если тест-кейс не найден -> NotFoundError.
       - Идемпотентно: если уже is_deleted -> возвращаем объект.
       - В транзакции: помечаем tc.is_deleted=True, tc.deleted_at и tc.updated_at.
+      - Добавляем суффикс _deleted_{id} к имени для обхода UniqueConstraint (name, is_deleted).
       - Flush + refresh и возвращаем tc.
     """
     if not isinstance(test_case_id, int) or test_case_id <= 0:
@@ -931,7 +932,9 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
 
             now = datetime.now(timezone.utc)
 
-            # Просто помечаем тест-кейс как удалённый
+            # Добавляем уникальный суффикс к имени для обхода UniqueConstraint (name, is_deleted).
+            # Это позволяет иметь несколько удалённых кейсов с изначально одинаковым именем.
+            tc.name = f"{tc.name}_deleted_{tc.id}"
             tc.is_deleted = True
             tc.deleted_at = now
             tc.updated_at = now

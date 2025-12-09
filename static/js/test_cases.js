@@ -1,10 +1,131 @@
 (() => {
+  // ========== Парсинг ошибки ==========
+  function parseErrorMessage(message) {
+    if (!message) return "Неизвестная ошибка";
+    
+    // Попробовать парсить как JSON целиком
+    try {
+      const parsed = JSON.parse(message);
+      return parsed.description || parsed.message || parsed.name || message;
+    } catch (e) {
+      // Не JSON целиком
+    }
+    
+    // Попробовать найти JSON внутри строки (например "Текст: {json}")
+    const jsonMatch = message.match(/\{[\s\S]*\}/);
+    if (jsonMatch) {
+      try {
+        const parsed = JSON.parse(jsonMatch[0]);
+        return parsed.description || parsed.message || parsed.name || message;
+      } catch (e) {
+        // не валидный JSON внутри
+      }
+    }
+    
+    return message;
+  }
+
+  // ========== Toast уведомления ==========
+  const toast = {
+    container: null,
+    init() {
+      if (this.container) return;
+      this.container = document.createElement("div");
+      this.container.id = "toast-container";
+      this.container.className = "fixed top-4 right-4 z-50 flex flex-col gap-2";
+      document.body.appendChild(this.container);
+    },
+    show(message, type = "error", duration = 10000) {
+      this.init();
+      const toastEl = document.createElement("div");
+      const bgColor = type === "error" ? "bg-red-500" : type === "success" ? "bg-green-500" : "bg-blue-500";
+      toastEl.className = `${bgColor} text-white px-4 py-3 rounded shadow-lg max-w-md animate-fade-in flex items-start gap-2`;
+      
+      const displayMsg = parseErrorMessage(message);
+      
+      toastEl.innerHTML = `
+        <span class="flex-1">${displayMsg}</span>
+        <button class="ml-2 font-bold hover:opacity-75" onclick="this.parentElement.remove()">×</button>
+      `;
+      this.container.appendChild(toastEl);
+      
+      if (duration > 0) {
+        setTimeout(() => toastEl.remove(), duration);
+      }
+    },
+    error(message) { this.show(message, "error"); },
+    success(message) { this.show(message, "success"); },
+    info(message) { this.show(message, "info"); }
+  };
+
+  // ========== Автоматическое изменение размера textarea ==========
+  function autoResizeTextarea(textarea, maxRows = 15) {
+    if (!textarea) return;
+    
+    // Сохраняем минимальную высоту (1 строка)
+    const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 20;
+    const paddingTop = parseInt(getComputedStyle(textarea).paddingTop) || 0;
+    const paddingBottom = parseInt(getComputedStyle(textarea).paddingBottom) || 0;
+    const minHeight = lineHeight + paddingTop + paddingBottom;
+    const maxHeight = lineHeight * maxRows + paddingTop + paddingBottom;
+    
+    // Функция изменения размера
+    const resize = () => {
+      textarea.style.height = "auto";
+      const scrollHeight = textarea.scrollHeight;
+      textarea.style.height = Math.min(Math.max(scrollHeight, minHeight), maxHeight) + "px";
+      textarea.style.overflowY = scrollHeight > maxHeight ? "auto" : "hidden";
+    };
+    
+    // Применить сразу и при вводе
+    resize();
+    textarea.addEventListener("input", resize);
+  }
+
+  function setupAutoResizeForForm(form) {
+    if (!form) return;
+    
+    // Большие поля: preconditions, description, expected_result — макс 15 строк
+    ["preconditions", "description", "expected_result"].forEach(name => {
+      const textarea = form.querySelector(`textarea[name="${name}"]`);
+      if (textarea) autoResizeTextarea(textarea, 15);
+    });
+    
+    // Поля шагов: action, expected — макс 5 строк
+    form.querySelectorAll("[data-step-action], [data-step-expected]").forEach(textarea => {
+      autoResizeTextarea(textarea, 5);
+    });
+  }
+
+  // ========== Валидация полей ==========
+  function validateField(input, errorMessage) {
+    const value = input?.value?.trim() || "";
+    if (!value) {
+      input.classList.add("border-red-500", "bg-red-50");
+      toast.error(errorMessage);
+      input.focus();
+      return false;
+    }
+    input.classList.remove("border-red-500", "bg-red-50");
+    return true;
+  }
+
+  function clearFieldError(input) {
+    if (input) {
+      input.classList.remove("border-red-500", "bg-red-50");
+    }
+  }
+
+  // ========== API ==========
   const api = {
     async request(url, { method = "GET", body, headers = {} } = {}) {
       const opts = {
         method,
         credentials: "same-origin",
         headers: {
+          // Явно указываем Accept: application/json чтобы бэкенд
+          // не делал redirect и возвращал JSON-ответ
+          Accept: "application/json",
           ...(body ? { "Content-Type": "application/json" } : {}),
           ...headers,
         },
@@ -78,7 +199,8 @@
 
   function createStepNode(idx, action = "", expected = "") {
     const div = document.createElement("div");
-    div.className = "p-2";
+    // Убираем лишний padding, используем только py-1 для небольшого вертикального отступа
+    div.className = "py-1";
     div.setAttribute("data-step-row", "true");
     div.innerHTML = `
       <div class="flex gap-2 items-start">
@@ -88,6 +210,12 @@
         <button type="button" class="px-3 py-1 text-green-600 border border-green-200 rounded btn-insert-step hover:bg-green-50" data-insert-index="${idx}">+</button>
         <button type="button" class="px-3 py-1 text-red-600 border border-red-200 rounded btn-delete-step hover:bg-red-50" data-delete-index="${idx}">−</button>
       </div>`;
+    
+    // Применяем автоматическое изменение размера к новым textarea (макс 5 строк)
+    div.querySelectorAll("[data-step-action], [data-step-expected]").forEach(textarea => {
+      autoResizeTextarea(textarea, 5);
+    });
+    
     return div;
   }
 
@@ -143,17 +271,32 @@
     reindexSteps(stepsContainer);
     toggleAddButton(stepsContainer, addBtn);
 
+    // Автоматическое изменение размера textarea
+    setupAutoResizeForForm(form);
+
+    // Очистка ошибки при вводе в поле названия
+    const nameInput = form.querySelector('input[name="name"]');
+    if (nameInput) {
+      nameInput.addEventListener("input", () => clearFieldError(nameInput));
+    }
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
       const actionUrl = "/test_cases";
+      const nameInput = form.querySelector('input[name="name"]');
       const tags = form.querySelector('input[name="tags"]')?.value || "";
       const suites =
         form.querySelector('input[name="suite_links"]')?.value ||
         form.querySelector('input[name="suites"]')?.value ||
         "";
 
+      // Валидация названия
+      if (!validateField(nameInput, "Название тест-кейса обязательно")) {
+        return;
+      }
+
       const payload = {
-        name: form.querySelector('input[name="name"]')?.value?.trim(),
+        name: nameInput.value.trim(),
         preconditions: form.querySelector('textarea[name="preconditions"]')?.value,
         description: form.querySelector('textarea[name="description"]')?.value,
         expected_result:
@@ -163,30 +306,28 @@
         steps: serializeSteps(stepsContainer),
       };
 
-      if (!payload.name) {
-        alert("Заполните название");
-        return;
-      }
-
       try {
-      const res = await api.request(actionUrl, {
+        const res = await api.request(actionUrl, {
           method: "POST",
           body: JSON.stringify(payload),
         });
+        toast.success("Тест-кейс успешно создан");
         const id =
           res?.id ||
           res?.body?.id ||
           res?.run_id ||
           res?.test_case_id ||
           res?.items?.[0]?.id;
-        if (id) {
-          window.location.href = `/testcases?selected_id=${id}`;
-        } else {
-          window.location.href = "/testcases";
-        }
+        setTimeout(() => {
+          if (id) {
+            window.location.href = `/testcases?selected_id=${id}`;
+          } else {
+            window.location.href = "/testcases";
+          }
+        }, 500);
       } catch (err) {
         console.error(err);
-        alert(`Не удалось создать тест-кейс: ${err.message}`);
+        toast.error(`Не удалось создать тест-кейс: ${err.message}`);
       }
     });
   }
@@ -203,16 +344,31 @@
     reindexSteps(stepsContainer);
     toggleAddButton(stepsContainer, addBtn);
 
+    // Автоматическое изменение размера textarea
+    setupAutoResizeForForm(form);
+
+    // Очистка ошибки при вводе в поле названия
+    const nameInput = form.querySelector('input[name="name"]');
+    if (nameInput) {
+      nameInput.addEventListener("input", () => clearFieldError(nameInput));
+    }
+
     form.addEventListener("submit", async (e) => {
       e.preventDefault();
+      const nameInput = form.querySelector('input[name="name"]');
       const tags = form.querySelector('textarea[name="tags"]')?.value || "";
       const suites =
         form.querySelector('textarea[name="suites"]')?.value ||
         form.querySelector('input[name="suite_links"]')?.value ||
         "";
 
+      // Валидация названия
+      if (!validateField(nameInput, "Название тест-кейса обязательно")) {
+        return;
+      }
+
       const payload = {
-        name: form.querySelector('input[name="name"]')?.value?.trim(),
+        name: nameInput.value.trim(),
         preconditions: form.querySelector('textarea[name="preconditions"]')?.value,
         description: form.querySelector('textarea[name="description"]')?.value,
         expected_result:
@@ -222,20 +378,18 @@
         steps: serializeSteps(stepsContainer),
       };
 
-      if (!payload.name) {
-        alert("Заполните название");
-        return;
-      }
-
       try {
         await api.request(actionUrl, {
           method: "PUT",
           body: JSON.stringify(payload),
         });
-        window.location.href = `/testcases?selected_id=${tcId}`;
+        toast.success("Тест-кейс успешно сохранён");
+        setTimeout(() => {
+          window.location.href = `/testcases?selected_id=${tcId}`;
+        }, 500);
       } catch (err) {
         console.error(err);
-        alert(`Не удалось сохранить тест-кейс: ${err.message}`);
+        toast.error(`Не удалось сохранить тест-кейс: ${err.message}`);
       }
     });
 
@@ -247,10 +401,13 @@
         if (!confirm(msg)) return;
         try {
           await api.request(`/test_cases/${tcId}`, { method: "DELETE" });
-          window.location.href = "/testcases";
+          toast.success("Тест-кейс удалён");
+          setTimeout(() => {
+            window.location.href = "/testcases";
+          }, 500);
         } catch (err) {
           console.error(err);
-          alert(`Не удалось удалить тест-кейс: ${err.message}`);
+          toast.error(`Не удалось удалить тест-кейс: ${err.message}`);
         }
       });
     }
@@ -268,10 +425,11 @@
           await api.request(`/test_cases/${tcId}/attachments/${attachmentId}`, {
             method: "DELETE",
           });
-          window.location.reload();
+          toast.success("Вложение удалено");
+          setTimeout(() => window.location.reload(), 500);
         } catch (err) {
           console.error(err);
-          alert(`Не удалось удалить вложение: ${err.message}`);
+          toast.error(`Не удалось удалить вложение: ${err.message}`);
         }
       });
     });

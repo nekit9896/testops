@@ -2,8 +2,6 @@ from flask import Flask
 from flask_migrate import Migrate
 from flask_sqlalchemy import SQLAlchemy
 
-from logger import init_logger
-
 from .config import Config
 
 # Создаем объект SQLAlchemy
@@ -28,16 +26,6 @@ def create_app():
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.from_object(Config)
     # app.config["SQLALCHEMY_ECHO"] = True
-
-    # Инициализирует логер
-    logger = init_logger()
-
-    @app.before_request
-    def log_request_info() -> None:
-        """
-        Логирует каждый запрос
-        """
-        logger.info("Выполнение запроса")
 
     # Инициализация баз данных
     db.init_app(app)

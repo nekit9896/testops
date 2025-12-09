@@ -293,7 +293,7 @@ def create_test_case():
     except testcase_help.ConflictError as ce:
         logger.warning("Конфликт при создании TestCase", exc_info=ce)
         # Если клиент ожидает HTML — попробуем flash+redirect, но защитимся от отсутствия session/secret_key
-        if flask.flask.request.accept_mimetypes.accept_html:
+        if flask.request.accept_mimetypes.accept_html:
             try:
                 flask.flash("Название тест-кейса должно быть уникальным", "error")
                 return flask.redirect(flask.url_for("routes.test_cases_page"))

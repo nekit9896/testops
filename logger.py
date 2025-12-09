@@ -46,10 +46,19 @@ def add_request_data(_, __, event_dict: dict) -> dict:
     return event_dict
 
 
+_logger_configured = False
+
+
 def setup_logger(file_path: str) -> None:
     """
     Настраивает structlog с JSON-форматированием.
+    Вызывается один раз при импорте модуля.
     """
+    global _logger_configured
+    if _logger_configured:
+        return
+    _logger_configured = True
+
     structlog.configure(
         processors=[
             # Очень важно соблюдать последовательность процессоров
@@ -68,9 +77,10 @@ def setup_logger(file_path: str) -> None:
                 ensure_ascii=False
             ),  # Вывод в JSON, отображение кириллицы
         ],
-        context_class=dict,  # Доля попа в виде словаря
-        logger_factory=structlog.stdlib.LoggerFactory(),  # Тип логера, нужно для интеграции structlog и logging
-        cache_logger_on_first_use=True,  # Для использования одного экземпляра логера
+        context_class=dict,
+        # PrintLoggerFactory выводит напрямую без дублирования через stdlib logging
+        logger_factory=structlog.PrintLoggerFactory(),
+        cache_logger_on_first_use=True,
     )
 
 
