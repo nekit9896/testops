@@ -59,14 +59,13 @@
   };
 
   // ========== Автоматическое изменение размера textarea ==========
-  function autoResizeTextarea(textarea, maxRows = 15) {
+  function autoResizeTextarea(textarea, maxRows = 15, minRows = 1) {
     if (!textarea) return;
     
-    // Сохраняем минимальную высоту (1 строка)
     const lineHeight = parseInt(getComputedStyle(textarea).lineHeight) || 20;
     const paddingTop = parseInt(getComputedStyle(textarea).paddingTop) || 0;
     const paddingBottom = parseInt(getComputedStyle(textarea).paddingBottom) || 0;
-    const minHeight = lineHeight + paddingTop + paddingBottom;
+    const minHeight = lineHeight * minRows + paddingTop + paddingBottom;
     const maxHeight = lineHeight * maxRows + paddingTop + paddingBottom;
     
     // Функция изменения размера
@@ -85,15 +84,15 @@
   function setupAutoResizeForForm(form) {
     if (!form) return;
     
-    // Большие поля: preconditions, description, expected_result — макс 15 строк
+    // Большие поля: preconditions, description, expected_result — макс 15 строк, мин 2 строки
     ["preconditions", "description", "expected_result"].forEach(name => {
       const textarea = form.querySelector(`textarea[name="${name}"]`);
-      if (textarea) autoResizeTextarea(textarea, 15);
+      if (textarea) autoResizeTextarea(textarea, 15, 2);
     });
     
-    // Поля шагов: action, expected — макс 5 строк
+    // Поля шагов: action, expected — макс 5 строк, мин 2 строка
     form.querySelectorAll("[data-step-action], [data-step-expected]").forEach(textarea => {
-      autoResizeTextarea(textarea, 5);
+      autoResizeTextarea(textarea, 5, 1.5);
     });
   }
 
@@ -203,17 +202,17 @@
     div.className = "py-1";
     div.setAttribute("data-step-row", "true");
     div.innerHTML = `
-      <div class="flex gap-2 items-start">
-        <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${idx + 1}</div>
+      <div class="flex gap-2 items-center">
+        <div class="w-8 text-sm text-gray-600 flex-none">#${idx + 1}</div>
         <textarea class="flex-1 border rounded text-sm px-2 py-1" rows="1" placeholder="Action" data-step-action>${action}</textarea>
         <textarea class="flex-1 border rounded text-sm px-2 py-1" rows="1" placeholder="Expected" data-step-expected>${expected}</textarea>
-        <button type="button" class="px-3 py-1 text-green-600 border border-green-200 rounded btn-insert-step hover:bg-green-50" data-insert-index="${idx}">+</button>
-        <button type="button" class="px-3 py-1 text-red-600 border border-red-200 rounded btn-delete-step hover:bg-red-50" data-delete-index="${idx}">−</button>
+        <button type="button" class="px-3 py-1 text-green-600 border border-green-200 rounded btn-insert-step hover:bg-green-50 font-bold" data-insert-index="${idx}">+</button>
+        <button type="button" class="px-3 py-1 text-red-600 border border-red-200 rounded btn-delete-step hover:bg-red-50 font-bold" data-delete-index="${idx}">−</button>
       </div>`;
     
-    // Применяем автоматическое изменение размера к новым textarea (макс 5 строк)
+    // Применяем автоматическое изменение размера к новым textarea (макс 5 строк, мин 1 строка)
     div.querySelectorAll("[data-step-action], [data-step-expected]").forEach(textarea => {
-      autoResizeTextarea(textarea, 5);
+      autoResizeTextarea(textarea, 5, 1.5);
     });
     
     return div;

@@ -1,4 +1,3 @@
-import re
 from typing import List, Optional
 
 import flask as flask
@@ -17,69 +16,6 @@ from logger import init_logger
 bp = flask.Blueprint("routes", __name__)
 minio_client = MinioClient()
 logger = init_logger()
-
-
-def _parse_test_case_payload_from_form() -> Optional[dict]:
-    """
-    Fallback-парсер для form-data (urlencoded/multipart) при отсутствии JSON.
-    Поддерживает простые поля, теги (через запятую), suite_links (через запятую),
-    шаги вида steps[0][action]/[expected]/[position].
-    """
-    form = flask.request.form or {}
-    payload = {}
-
-    for f in ("name", "preconditions", "description", "expected_result"):
-        if f in form:
-            payload[f] = form.get(f)
-
-    tags_raw = form.get("tags")
-    if tags_raw is not None:
-        payload["tags"] = [t.strip() for t in tags_raw.split(",") if t.strip()]
-
-    suites_raw = form.get("suite_links") or form.get("suites")
-    if suites_raw:
-        suites = [s.strip() for s in suites_raw.split(",") if s.strip()]
-        payload["suite_links"] = [{"suite_name": s} for s in suites]
-
-    steps_regex = re.compile(r"^steps\[(\d+)\]\[(action|expected|position)\]$")
-    steps_map = {}
-    for key, val in form.items():
-        m = steps_regex.match(key)
-        if not m:
-            continue
-        idx = int(m.group(1))
-        field = m.group(2)
-        steps_map.setdefault(idx, {})
-        if field == "position":
-            try:
-                steps_map[idx][field] = int(val)
-            except Exception:
-                steps_map[idx][field] = None
-        else:
-            steps_map[idx][field] = val
-
-    if steps_map:
-        steps_list = []
-        for i in sorted(steps_map.keys()):
-            s = steps_map[i]
-            steps_list.append(
-                {
-                    "position": s.get("position"),
-                    "action": s.get("action", "") or "",
-                    "expected": s.get("expected", "") or "",
-                }
-            )
-        payload["steps"] = steps_list
-
-    return payload if payload else None
-
-
-def _get_test_case_payload() -> Optional[dict]:
-    """Унифицированный источник payload: JSON или form."""
-    payload = flask.request.get_json(silent=True)
-    if payload:
-        return payload
-    return _parse_test_case_payload_from_form()
 
 
 @bp.route("/", methods=["GET"])
@@ -267,7 +203,7 @@ def create_test_case():
     - мапит доменные исключения на HTTP-коды,
     - возвращает 201 с Location и телом созданного ресурса.
     """
-    payload = _get_test_case_payload()
+    payload = testcase_help.get_test_case_payload()
     if not payload:
         logger.error("create_test_case: пустой или некорректный JSON")
         flask.abort(400, description="Invalid or missing JSON body")
@@ -461,7 +397,7 @@ def update_test_case(test_case_id: int):
     """
 
     logger.info("update_test_case: incoming request", test_case_id=test_case_id)
-    payload = _get_test_case_payload()
+    payload = testcase_help.get_test_case_payload()
 
     if not payload:
         logger.error("update_test_case: пустой или некорректный JSON")
