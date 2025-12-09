@@ -39,11 +39,6 @@ def create_app():
         """
         logger.info("Выполнение запроса")
 
-    # Инициализация method-override (поддержка _method)
-    from .method_override import init_method_override
-
-    init_method_override(app)
-
     # Инициализация баз данных
     db.init_app(app)
     migrate.init_app(app, db)

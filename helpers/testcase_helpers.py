@@ -255,12 +255,14 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuit
         if not suite:
             # Не бросаем NotFoundError, а возвращаем None
             return None
+        db.session.add(suite)
         return suite
 
     if "suite_name" in normalized and normalized["suite_name"]:
         name = normalized["suite_name"]
         suite = _get_suite_by_name(name)
         if suite:
+            db.session.add(suite)
             return suite
         now = datetime.now(timezone.utc)
         suite = models.TestSuite(name=name, created_at=now, updated_at=now)

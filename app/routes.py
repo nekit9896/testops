@@ -1,3 +1,4 @@
+import re
 from typing import List, Optional
 
 import flask as flask
@@ -9,7 +10,6 @@ import helpers.testcase_attachment_helpers as attach_help
 import helpers.testcase_helpers as testcase_help
 from app import db
 from app.clients import MinioClient
-from app.method_override import payload_from_form_or_json
 from app.models import Attachment, TestCase, TestResult
 from helpers import testrun_helpers
 from logger import init_logger
@@ -17,6 +17,69 @@ from logger import init_logger
 bp = flask.Blueprint("routes", __name__)
 minio_client = MinioClient()
 logger = init_logger()
+
+
+def _parse_test_case_payload_from_form() -> Optional[dict]:
+    """
+    Fallback-парсер для form-data (urlencoded/multipart) при отсутствии JSON.
+    Поддерживает простые поля, теги (через запятую), suite_links (через запятую),
+    шаги вида steps[0][action]/[expected]/[position].
+    """
+    form = flask.request.form or {}
+    payload = {}
+
+    for f in ("name", "preconditions", "description", "expected_result"):
+        if f in form:
+            payload[f] = form.get(f)
+
+    tags_raw = form.get("tags")
+    if tags_raw is not None:
+        payload["tags"] = [t.strip() for t in tags_raw.split(",") if t.strip()]
+
+    suites_raw = form.get("suite_links") or form.get("suites")
+    if suites_raw:
+        suites = [s.strip() for s in suites_raw.split(",") if s.strip()]
+        payload["suite_links"] = [{"suite_name": s} for s in suites]
+
+    steps_regex = re.compile(r"^steps\[(\d+)\]\[(action|expected|position)\]$")
+    steps_map = {}
+    for key, val in form.items():
+        m = steps_regex.match(key)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        field = m.group(2)
+        steps_map.setdefault(idx, {})
+        if field == "position":
+            try:
+                steps_map[idx][field] = int(val)
+            except Exception:
+                steps_map[idx][field] = None
+        else:
+            steps_map[idx][field] = val
+
+    if steps_map:
+        steps_list = []
+        for i in sorted(steps_map.keys()):
+            s = steps_map[i]
+            steps_list.append(
+                {
+                    "position": s.get("position"),
+                    "action": s.get("action", "") or "",
+                    "expected": s.get("expected", "") or "",
+                }
+            )
+        payload["steps"] = steps_list
+
+    return payload if payload else None
+
+
+def _get_test_case_payload() -> Optional[dict]:
+    """Унифицированный источник payload: JSON или form."""
+    payload = flask.request.get_json(silent=True)
+    if payload:
+        return payload
+    return _parse_test_case_payload_from_form()
 
 
 @bp.route("/", methods=["GET"])
@@ -204,7 +267,7 @@ def create_test_case():
     - мапит доменные исключения на HTTP-коды,
     - возвращает 201 с Location и телом созданного ресурса.
     """
-    payload = payload_from_form_or_json()
+    payload = _get_test_case_payload()
     if not payload:
         logger.error("create_test_case: пустой или некорректный JSON")
         flask.abort(400, description="Invalid or missing JSON body")
@@ -291,6 +354,10 @@ def list_test_cases():
     """
     q = flask.request.args.get("q")
     tags = flask.request.args.getlist("tag") or None
+    if not tags:
+        tags_csv = flask.request.args.get("tags", "").strip()
+        if tags_csv:
+            tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
 
     suite_id_params = flask.request.args.getlist("suite_id") or None
     suite_ids: Optional[List[int]] = None
@@ -393,10 +460,8 @@ def update_test_case(test_case_id: int):
       - 500 Internal Server Error — ошибки БД / прочие ошибки
     """
 
-    if flask.request.is_json:
-        payload = flask.request.get_json(silent=True)
-    else:
-        payload = payload_from_form_or_json()
+    logger.info("update_test_case: incoming request", test_case_id=test_case_id)
+    payload = _get_test_case_payload()
 
     if not payload:
         logger.error("update_test_case: пустой или некорректный JSON")
@@ -436,7 +501,7 @@ def update_test_case(test_case_id: int):
     return flask.jsonify(body), 200
 
 
-@bp.route("/test_cases/<int:test_case_id>", methods=["DELETE"])
+@bp.route("/test_cases/<int:test_case_id>", methods=["DELETE", "POST"])
 def delete_test_case(test_case_id: int):
     """
     DELETE /test_cases/<id> — мягкое удаление (soft delete).
@@ -446,6 +511,8 @@ def delete_test_case(test_case_id: int):
       - 409 Conflict — ошибка целостности БД
       - 500 — прочие ошибки
     """
+    logger.info("delete_test_case: incoming request", test_case_id=test_case_id)
+
     try:
         testcase_help.soft_delete_test_case(test_case_id)
 
@@ -616,9 +683,16 @@ def get_archives_for_test_case(test_case_id: int):
 
 
 @bp.route(
-    "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>", methods=["DELETE"]
+    "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>",
+    methods=["DELETE", "POST"],
 )
 def delete_test_case_attachment(test_case_id: int, attachment_id: int):
+    logger.info(
+        "delete_test_case_attachment: incoming request",
+        test_case_id=test_case_id,
+        attachment_id=attachment_id,
+    )
+
     attachment = Attachment.query.get(attachment_id)
     if not attachment or attachment.test_case_id != test_case_id:
         flask.abort(404, description="Вложение не найдено")
