@@ -4,9 +4,11 @@ FROM python:3.10-slim
 # Установка рабочего каталога
 WORKDIR /app
 
-# Обновляем пакеты и устанавливаем зависимости
+# Обновляем пакеты и ставим системные зависимости
+# Берём default-jdk-headless, чтобы гарантированно получить Java для Allure
 RUN apt-get update && \
-    apt-get install -y wget unzip openjdk-17-jdk ca-certificates curl vim nano && \
+    apt-get install -y --no-install-recommends \
+        wget unzip default-jdk-headless ca-certificates curl vim nano && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists/*
 
@@ -20,9 +22,15 @@ RUN wget -q "https://github.com/allure-framework/allure2/releases/download/${ALL
 # Добавляем Allure в PATH
 ENV PATH="/opt/allure/bin:${PATH}"
 
-# Устанавливаем Poetry
+# Устанавливаем Poetry и его конфиг
 RUN pip install --upgrade pip && \
-    pip install poetry
+    pip install poetry && \
+    poetry config virtualenvs.create false
 
-# Делаем так, чтобы Poetry не использовал виртуальные окружения
-RUN poetry config virtualenvs.create false
+# Ставим python-зависимости один раз в базовый образ
+COPY pyproject.toml poetry.lock ./
+RUN poetry install --no-root --no-interaction --no-ansi
+
+# Кладём неизменяемые статические файлы сразу в базовый слой
+RUN mkdir -p /app/static/css
+COPY static/css/tailwind.min.css /app/static/css/tailwind.min.css

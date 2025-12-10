@@ -9,8 +9,6 @@ __pycashe__/
 node_modules/
 allure-results/
 
-# Исключить файлы с кредами
-poetry.lock
 
 # Игнорируем скрытые файлы
 .*
