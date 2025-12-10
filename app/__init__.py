@@ -22,7 +22,7 @@ def create_app():
     Маршруты регистрируются через Blueprint
     :return: возвращает сконфигурированный объект Flask приложения
     """
-    # При инициализации указываете папки с html и css в корне проекта
+    # При инициализации указывает папки с html и css в корне проекта
     app = Flask(__name__, template_folder="../templates", static_folder="../static")
     app.config.from_object(Config)
     # app.config["SQLALCHEMY_ECHO"] = True

@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-import flask as flask
+import flask
 from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
 
@@ -542,6 +542,9 @@ def upload_test_case_attachment(test_case_id: int):
 
 @bp.route("/test_cases/<int:test_case_id>/attachments", methods=["GET"])
 def list_test_case_attachments(test_case_id: int):
+    """
+    Получение списка вложений по айди тест кейса
+    """
     tc = TestCase.query.get(test_case_id)
     if not tc:
         flask.abort(404, description="TestCase не найден")
@@ -610,6 +613,9 @@ def get_test_case_attachment(test_case_id: int, attachment_id: int):
 
 @bp.route("/test_cases/<int:test_case_id>/attachments/archives", methods=["GET"])
 def get_archives_for_test_case(test_case_id: int):
+    """
+    Получение вложений по айди
+    """
     tc = TestCase.query.get(test_case_id)
     if not tc:
         flask.abort(404, description="TestCase не найден")
@@ -623,6 +629,9 @@ def get_archives_for_test_case(test_case_id: int):
     methods=["DELETE", "POST"],
 )
 def delete_test_case_attachment(test_case_id: int, attachment_id: int):
+    """
+    Удаление вложения по айди
+    """
     logger.info(
         "delete_test_case_attachment: incoming request",
         test_case_id=test_case_id,

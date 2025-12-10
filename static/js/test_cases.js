@@ -555,7 +555,6 @@
             prev.remove();
           }
         } else if (incomingPrev && incomingPrev.href) {
-          // if prev link was absent, append near pagination container
           const pag = document.querySelector("#pagination");
           if (pag) {
             pag.insertAdjacentElement("afterbegin", incomingPrev);
