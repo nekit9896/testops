@@ -87,18 +87,6 @@ def _load_test_case(
     return tc
 
 
-def get_test_case_or_none(
-    test_case_id: int, *, include_deleted: bool = False
-) -> Optional[models.TestCase]:
-    """
-    Публичный helper для роутов/сервисов: возвращает TestCase или None.
-    Не бросает исключения, только фильтрует по include_deleted.
-    """
-    if not isinstance(test_case_id, int) or test_case_id <= 0:
-        return None
-    return _load_test_case(test_case_id, include_deleted=include_deleted)
-
-
 def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Базовая валидация и нормализация полей payload.
 

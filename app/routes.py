@@ -612,19 +612,6 @@ def get_test_case_attachment(test_case_id: int, attachment_id: int):
     return flask.jsonify(body), 200
 
 
-@bp.route("/test_cases/<int:test_case_id>/attachments/archives", methods=["GET"])
-def get_archives_for_test_case(test_case_id: int):
-    """
-    Получение вложений по айди
-    """
-    tc = TestCase.query.get(test_case_id)
-    if not tc:
-        flask.abort(404, description="TestCase не найден")
-
-    items = attach_help.list_archives_for_test_case(test_case_id)
-    return flask.jsonify({"items": items}), 200
-
-
 @bp.route(
     "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>",
     methods=["DELETE", "POST"],
