@@ -7,6 +7,7 @@ from werkzeug.routing import BuildError
 import constants as const
 import helpers.testcase_attachment_helpers as attach_help
 import helpers.testcase_helpers as testcase_help
+import helpers.testcase_page_helpers as page_help
 from app import db
 from app.clients import MinioClient
 from app.models import Attachment, TestCase, TestResult
@@ -772,3 +773,32 @@ def test_cases_page():
         all_tags=all_tags,  # <- список тегов для фронта
         selected_tags=",".join(tags) if tags else "",
     )
+
+
+@bp.route("/testcases/partial/detail", methods=["GET"])
+@bp.route("/testcases/partial/detail/<int:test_case_id>", methods=["GET"])
+def test_case_detail_partial(test_case_id: int = None):
+    """
+    Partial endpoint для AJAX-загрузки детальной панели тест-кейса.
+
+    Возвращает только HTML содержимое правой панели, без остальной страницы.
+
+    Query params:
+        - create: "1" или "true" - показать форму создания вместо редактирования
+        - include_deleted: "1" или "true" - показывать удалённые тест-кейсы
+
+    Returns:
+        HTML partial для вставки в #testcase-detail-panel
+    """
+    create_mode = flask.request.args.get("create") in ("1", "true", "True")
+    include_deleted = testcase_help.parse_bool_param(
+        flask.request.args.get("include_deleted")
+    )
+
+    html = page_help.render_testcase_detail_partial(
+        test_case_id=test_case_id,
+        create_mode=create_mode,
+        include_deleted=bool(include_deleted),
+    )
+
+    return html
