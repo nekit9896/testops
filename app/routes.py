@@ -728,8 +728,7 @@ def test_cases_page():
 
         # подготовим список всех тегов для dropdown на фронте (если модель Tag есть)
         try:
-            # если у вас есть флаг is_deleted для Tag — используйте его
-            all_tags = Tag.query.order_by(Tag.name).all()
+            all_tags = Tag.query.filter_by(is_deleted=False).order_by(Tag.name).all()
         except Exception:
             # fallback: если Tag нет / не поддерживает .order_by
             all_tags = []

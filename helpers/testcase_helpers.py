@@ -159,10 +159,11 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
     """Возвращает существующий Tag или создаёт новый по имени.
 
     Поведение:
-    - Если передан 'id' и тег найден -> возвращаем его.
+    - Если передан 'id' и тег найден -> возвращаем его (восстанавливаем, если был удалён).
     - Если передан 'id' и тег НЕ найден -> возвращаем None (и логируем),
       чтобы вызывающий код мог решить — пропустить или считать это ошибкой.
     - Если передан 'name' -> ищем по имени, создаём, если нет.
+      Если тег найден и был удалён (is_deleted=True) -> восстанавливаем его.
     """
     # Пытаемся взять тег по id
     if "id" in normalized:
@@ -170,6 +171,10 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
         if not tag:
             # Чтобы не ломать весь payload.
             return None
+        # Восстанавливаем тег, если он был удалён
+        if tag.is_deleted:
+            tag.is_deleted = False
+            db.session.add(tag)
         return tag
 
     # Создание/поиск по имени
@@ -177,6 +182,10 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
         tag_name = normalized["name"]
         tag = _get_tag_by_name(tag_name)
         if tag:
+            # Восстанавливаем тег, если он был удалён
+            if tag.is_deleted:
+                tag.is_deleted = False
+                db.session.add(tag)
             return tag
 
         tag = models.Tag(name=tag_name)
@@ -189,6 +198,10 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
             db.session.rollback()
             tag = _get_tag_by_name(tag_name)
             if tag:
+                # Восстанавливаем тег, если он был удалён
+                if tag.is_deleted:
+                    tag.is_deleted = False
+                    db.session.add(tag)
                 return tag
             # Если всё ещё нет — пробрасываем, пусть вызывающий код решает.
             raise
@@ -755,6 +768,9 @@ def update_test_case_from_payload(
             # сохраняем старые suite_ids до удаления связей
             old_suite_ids = {link.suite_id for link in getattr(tc, "suite_links", [])}
 
+            # сохраняем старые tag_ids до обновления тегов
+            old_tag_ids = {tag.id for tag in getattr(tc, "tags", [])}
+
             # -----------------------
             # Обновляем теги (replace)
             # -----------------------
@@ -871,6 +887,29 @@ def update_test_case_from_payload(
                         suite_obj.is_deleted = True
                         db.session.add(suite_obj)
 
+            # -----------------------
+            # Обрабатываем изменения тегов: soft delete для удалённых из этого кейса
+            # -----------------------
+            new_tag_ids = tag_ids_seen
+            removed_tag_ids = old_tag_ids - new_tag_ids
+
+            # Для удалённых тегов: если они больше не связаны ни с одним активным кейсом — пометить is_deleted=True
+            for tag_id in removed_tag_ids:
+                active_tag_count = (
+                    db.session.query(func.count(models.TestCase.id))
+                    .join(models.TestCase.tags)
+                    .filter(
+                        models.Tag.id == tag_id,
+                        models.TestCase.is_deleted.is_(False),
+                    )
+                    .scalar()
+                )
+                if not active_tag_count:
+                    tag_obj = models.Tag.query.get(tag_id)
+                    if tag_obj and not tag_obj.is_deleted:
+                        tag_obj.is_deleted = True
+                        db.session.add(tag_obj)
+
             now = datetime.now(timezone.utc)
 
             # Обновляем простые поля
@@ -972,6 +1011,26 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
                     if suite and not suite.is_deleted:
                         suite.is_deleted = True
                         db.session.add(suite)
+
+            # Проверяем теги: если тег больше не связан ни с одним активным тест-кейсом,
+            # помечаем его как удалённый
+            tag_ids = {tag.id for tag in getattr(tc, "tags", [])}
+            for tag_id in tag_ids:
+                # count активных (is_deleted == False) кейсов с этим тегом
+                active_tag_count = (
+                    db.session.query(func.count(models.TestCase.id))
+                    .join(models.TestCase.tags)
+                    .filter(
+                        models.Tag.id == tag_id,
+                        models.TestCase.is_deleted.is_(False),
+                    )
+                    .scalar()
+                )
+                if not active_tag_count or int(active_tag_count) == 0:
+                    tag = models.Tag.query.get(tag_id)
+                    if tag and not tag.is_deleted:
+                        tag.is_deleted = True
+                        db.session.add(tag)
 
             # гарантируем, что объекты обновлены в сессии
             db.session.flush()
