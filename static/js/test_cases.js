@@ -318,11 +318,11 @@
           res?.test_case_id ||
           res?.items?.[0]?.id;
         setTimeout(() => {
-          if (id) {
-            window.location.href = `/testcases?selected_id=${id}`;
-          } else {
-            window.location.href = "/testcases";
-          }
+          // Сохраняем текущие фильтры при редиректе
+          const redirectUrl = id 
+            ? buildUrlWithFilters({ selected_id: id, create: null })
+            : buildUrlWithFilters({ create: null });
+          window.location.href = redirectUrl;
         }, 500);
       } catch (err) {
         console.error(err);
@@ -384,7 +384,8 @@
         });
         toast.success("Тест-кейс успешно сохранён");
         setTimeout(() => {
-          window.location.href = `/testcases?selected_id=${tcId}`;
+          // Сохраняем текущие фильтры при редиректе
+          window.location.href = buildUrlWithFilters({ selected_id: tcId });
         }, 500);
       } catch (err) {
         console.error(err);
@@ -402,7 +403,8 @@
           await api.request(`/test_cases/${tcId}`, { method: "DELETE" });
           toast.success("Тест-кейс удалён");
           setTimeout(() => {
-            window.location.href = "/testcases";
+            // Сохраняем текущие фильтры, убираем selected_id
+            window.location.href = buildUrlWithFilters({ selected_id: null });
           }, 500);
         } catch (err) {
           console.error(err);
@@ -683,6 +685,159 @@
     renderList("");
   }
 
+  // ========== Утилита для построения URL с сохранением фильтров ==========
+  function buildUrlWithFilters(params = {}) {
+    const currentParams = new URLSearchParams(window.location.search);
+    
+    // Удаляем cursor при смене selected_id (чтобы не было конфликтов)
+    if (params.selected_id !== undefined) {
+      currentParams.delete("cursor");
+    }
+    
+    // Применяем переданные параметры
+    for (const [key, value] of Object.entries(params)) {
+      if (value === null || value === undefined) {
+        currentParams.delete(key);
+      } else {
+        currentParams.set(key, value);
+      }
+    }
+    
+    return window.location.pathname + "?" + currentParams.toString();
+  }
+
+  // ========== Загрузка деталей тест-кейса через AJAX ==========
+  function setupTestcaseDetailLoader() {
+    const tbody = document.getElementById("cases-tbody");
+    const detailPanel = document.getElementById("testcase-detail-panel");
+    const createBtn = document.getElementById("btn-create-testcase");
+    
+    if (!detailPanel) return;
+    
+    // Обработчик для кнопки "Создать тест-кейс"
+    if (createBtn) {
+      createBtn.addEventListener("click", async (e) => {
+        e.preventDefault();
+        
+        const targetUrl = buildUrlWithFilters({ create: "1", selected_id: null });
+        
+        // Показываем индикатор загрузки
+        detailPanel.innerHTML = `
+          <div class="flex items-center justify-center h-32">
+            <svg class="w-8 h-8 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="ml-2 text-gray-500">Загрузка...</span>
+          </div>
+        `;
+        
+        // Снимаем выделение со всех строк
+        if (tbody) {
+          tbody.querySelectorAll(".testcase-row").forEach(row => {
+            row.classList.remove("bg-blue-50");
+          });
+        }
+        
+        try {
+          const res = await fetch(targetUrl, { credentials: "same-origin" });
+          if (!res.ok) throw new Error(`Request failed: ${res.status}`);
+          
+          const html = await res.text();
+          const parser = new DOMParser();
+          const doc = parser.parseFromString(html, "text/html");
+          
+          const incomingPanel = doc.querySelector("#testcase-detail-panel");
+          if (incomingPanel) {
+            detailPanel.innerHTML = incomingPanel.innerHTML;
+            setupCreateForm();
+          }
+          
+          window.history.pushState({}, "", targetUrl);
+          
+        } catch (err) {
+          console.error("Не удалось открыть форму создания:", err);
+          toast.error("Не удалось открыть форму создания");
+          detailPanel.innerHTML = `<div class="text-red-500 p-4">Ошибка загрузки формы</div>`;
+        }
+      });
+    }
+    
+    if (!tbody) return;
+    
+    // Используем делегирование событий для поддержки динамически добавленных строк
+    tbody.addEventListener("click", async (e) => {
+      const link = e.target.closest(".testcase-link");
+      if (!link) return;
+      
+      e.preventDefault();
+      
+      const testcaseId = link.dataset.testcaseId;
+      if (!testcaseId) return;
+      
+      // Строим URL с сохранением всех текущих фильтров
+      const targetUrl = buildUrlWithFilters({ selected_id: testcaseId });
+      
+      // Показываем индикатор загрузки в правой панели
+      detailPanel.innerHTML = `
+        <div class="flex items-center justify-center h-32">
+          <svg class="w-8 h-8 animate-spin text-blue-500" fill="none" viewBox="0 0 24 24">
+            <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+            <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+          </svg>
+          <span class="ml-2 text-gray-500">Загрузка...</span>
+        </div>
+      `;
+      
+      // Снимаем выделение со всех строк и выделяем текущую
+      tbody.querySelectorAll(".testcase-row").forEach(row => {
+        row.classList.remove("bg-blue-50");
+      });
+      const currentRow = tbody.querySelector(`.testcase-row[data-testcase-id="${testcaseId}"]`);
+      if (currentRow) {
+        currentRow.classList.add("bg-blue-50");
+      }
+      
+      try {
+        const res = await fetch(targetUrl, { credentials: "same-origin" });
+        if (!res.ok) {
+          throw new Error(`Request failed: ${res.status}`);
+        }
+        const html = await res.text();
+        const parser = new DOMParser();
+        const doc = parser.parseFromString(html, "text/html");
+        
+        // Получаем новое содержимое правой панели
+        const incomingPanel = doc.querySelector("#testcase-detail-panel");
+        if (incomingPanel) {
+          detailPanel.innerHTML = incomingPanel.innerHTML;
+          
+          // Переинициализируем обработчики для новой формы
+          setupEditForm();
+          setupAttachmentActions();
+          setupFileUpload();
+        }
+        
+        // Обновляем URL в адресной строке
+        window.history.pushState({}, "", targetUrl);
+        
+      } catch (err) {
+        console.error("Не удалось загрузить тест-кейс:", err);
+        toast.error("Не удалось загрузить тест-кейс");
+        detailPanel.innerHTML = `
+          <div class="text-red-500 p-4">
+            Ошибка загрузки тест-кейса. <a href="${targetUrl}" class="underline">Попробовать ещё раз</a>
+          </div>
+        `;
+      }
+    });
+    
+    // Обработка навигации браузера (кнопки назад/вперёд)
+    window.addEventListener("popstate", () => {
+      window.location.reload();
+    });
+  }
+
   // ========== Пагинация "Load More" для тест-кейсов ==========
   function setupLoadMorePagination() {
     const nextLink = document.getElementById("next-link");
@@ -763,6 +918,7 @@
     setupAttachmentActions();
     setupFileUpload();
     setupLoadMorePagination();
+    setupTestcaseDetailLoader();
 
     // Автоприменение для include_deleted и sort
     document
