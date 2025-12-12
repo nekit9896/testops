@@ -43,7 +43,7 @@
     });
   }
 
-  // Проверяет, что поле не пустое, и подсвечивает/показывает ошибку
+  // Валидация полей
   function validateField(input, errorMessage) {
     const value = input?.value?.trim() || "";
     if (!value) {
@@ -102,7 +102,7 @@
     return window.location.pathname + "?" + currentParams.toString();
   }
 
-  // Строит URL для partial-эндпойнта содержания тест-кейса
+  // Строит URL для partial-endpoint содержания тест-кейса
   function buildPartialUrl(testcaseId, createMode = false) {
     const params = new URLSearchParams();
     const currentParams = new URLSearchParams(window.location.search);
