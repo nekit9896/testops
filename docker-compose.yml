@@ -14,7 +14,7 @@ services:
       - "5433:5432"
 
   flask-app:
-    image: nekit9896/testops-flask-app:v1.3.36
+    image: nekit9896/testops-flask-app:v1.3.37
     container_name: testops-flask-app
     restart: always
     ports:

@@ -1,5 +1,5 @@
 /**
- * Загрузка деталей тест-кейса через Partial Rendering.
+ * Загрузка содержания тест-кейса через Partial Rendering.
  * Зависимости: namespace.js, common/toast.js, common/utils.js, testcases/forms.js, testcases/attachments.js
  */
 (function() {

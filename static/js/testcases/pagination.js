@@ -14,7 +14,7 @@
     
     if (!nextLink || !tbody) return;
     
-    // Скрываем кнопку Prev, так как теперь все данные накапливаются
+    // Скрываем кнопку Prev
     if (prevLink) {
       prevLink.classList.add("hidden");
     }

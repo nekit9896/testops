@@ -28,7 +28,6 @@ minio_client = MinioClient()
 # -------------------------------
 class TestCaseError(Exception):
     """Базовое исключение для ошибок, связанных с TestCase.
-
     Используется для того, чтобы маршруты могли перехватывать и корректно
     сопоставлять исключения с HTTP-ответами.
     """
@@ -36,7 +35,6 @@ class TestCaseError(Exception):
 
 class ValidationError(TestCaseError):
     """Ошибка валидации входных данных (эквивалент HTTP 400).
-
     Бросается при неверной структуре payload, отсутствующих обязательных полях
     или при логических конфликтах (например, дубликат позиции шага).
     """
@@ -48,7 +46,6 @@ class NotFoundError(TestCaseError):
 
 class ConflictError(TestCaseError):
     """Ошибка конфликта (эквивалент HTTP 409).
-
     Используется для того, чтобы узнать о нарушении например уникальности имени тест-кейса.
     """
 
@@ -58,7 +55,6 @@ class ConflictError(TestCaseError):
 # -------------------------------
 def _ensure_list(value: Optional[Iterable]) -> List:
     """Гарантирует, что возвращается список (не None).
-
     Если value == None возвращаем пустой список. Удобно для полей payload,
     которые могут быть опущены в запросе.
     """
@@ -89,7 +85,6 @@ def _load_test_case(
 
 def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Базовая валидация и нормализация полей payload.
-
     Проверяем обязательное поле 'name' и нормализуем опциональные поля.
     Возвращаем нормализованный словарь для дальнейшей обработки.
     """
@@ -134,7 +129,6 @@ def _get_tag_by_name(name: str) -> Optional[models.Tag]:
 
 def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Преобразует входное представление тега в нормализованную форму.
-
     Принимается либо строка (имя тега), либо объект {"id": ...} / {"name": ...}.
     Если вход пустой/пустая строка — возвращается {"skip": True}.
     """
@@ -157,9 +151,8 @@ def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
 
 def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
     """Возвращает существующий Tag или создаёт новый по имени.
-
     Поведение:
-    - Если передан 'id' и тег найден -> возвращаем его (восстанавливаем, если был удалён).
+    - Если передан 'id' и тег найден -> возвращаем его
     - Если передан 'id' и тег НЕ найден -> возвращаем None (и логируем),
       чтобы вызывающий код мог решить — пропустить или считать это ошибкой.
     - Если передан 'name' -> ищем по имени, создаём, если нет.
@@ -215,7 +208,6 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
 # -------------------------------
 def _normalize_suite_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Нормализация одного элемента suite_links.
-
     Убеждаемся, что на вход — объект и извлекаем ожидаемые поля: suite_id / suite_name / position.
     """
     if not isinstance(raw, dict):
@@ -246,7 +238,6 @@ def _get_suite_by_name(name: str) -> Optional[models.TestSuite]:
 
 def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuite]:
     """Возвращает существующий TestSuite или создаёт новый по имени.
-
     Поведение:
     - Если передан 'suite_id' и сьют найден -> возвращаем его.
     - Если передан 'suite_id' и сьют НЕ найден -> возвращаем None (и логируем),
@@ -290,7 +281,6 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuit
 # -------------------------------
 def _normalize_step_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Нормализация одного шага тест-кейса.
-
     Убедимся, что step — объект и содержит непустой 'action'.
     Позиция может быть опущена — тогда будет назначена автоматически позже.
     """
@@ -427,7 +417,6 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
 # -------------------------------
 def serialize_test_case(tc: models.TestCase) -> Dict[str, Any]:
     """Преобразует TestCase в JSON-совместимый словарь.
-
     Сериализуем только публичные и необходимые поля — без лишних внутренних атрибутов.
     Сортируем шаги по позиции для детерминированности.
     """
@@ -526,7 +515,6 @@ def get_test_cases_cursored(
 ) -> Tuple[List["models.TestCase"], Dict[str, Any]]:
     """
     Возвращает (items, meta) используя cursor-based pagination.
-
     Поддерживаемые параметры:
       - q: частичный поиск по name и description (case-insensitive)
       - tags: список имён тегов (фильтр ANY)
@@ -657,7 +645,6 @@ def get_test_case_by_id(
 ) -> models.TestCase:
     """
     Получает TestCase по его id с eager-loading связанных сущностей.
-
     Поведение:
       - Если TestCase с переданным id не найден -> бросает NotFoundError.
       - Если TestCase найден, но помечен is_deleted и include_deleted == False -> тоже бросает NotFoundError.
@@ -665,7 +652,6 @@ def get_test_case_by_id(
     Параметры:
       - test_case_id: int — идентификатор искомого TestCase.
       - include_deleted: bool — если True, разрешаем возвращать помеченные как удалённые записи.
-
     Использует joinedload для подгрузки связей: steps, tags, suite_links->suite.
     """
     # Валидация аргумента
@@ -853,6 +839,7 @@ def update_test_case_from_payload(
                     suite=suite_obj, position=norm_suite_link.get("position")
                 )
                 tc.suite_links.append(link)
+
             # -----------------------
             # Обрабатываем изменения флагов is_deleted у affected suites
             # -----------------------
@@ -933,6 +920,7 @@ def update_test_case_from_payload(
         ) from ie
 
 
+# --------- DELETE TestCase logic ---------
 def soft_delete_test_case(test_case_id: int) -> models.TestCase:
     """
     Soft-delete TestCase: пометить запись как удалённую, не удаляя дочерние записи

@@ -159,7 +159,7 @@ def delete_test_run(run_id):
     ORM (Object-Relational Mapping), в нашем случае SQLAlchemy, позволяет обращаться к базе данных так,
     будто это обычный Python-объект.
     Метод получает объект TestResult по его первичному ключу (run_id),
-    и если он существует, то отмечает его как удаленный (is_deleted = True)
+    и если объект существует, то delete_test_run помечает его как удаленный (is_deleted = True)
     и сохраняет изменения в базе данных.
     """
     test_result = TestResult.query.get(run_id)
@@ -180,7 +180,6 @@ def delete_test_run(run_id):
 def create_test_case():
     """
     Создаёт TestCase вместе с опциональными: steps, tags, suite_links.
-
     Ожидаемый JSON-body:
     {
       "name": "...",
@@ -197,7 +196,6 @@ def create_test_case():
           {"suite_name": "...", "position": 2}
       ]
     }
-
     Роль этой функции — обёртка HTTP <-> domain:
     - читает JSON,
     - вызывает create_test_case_from_payload (всё в transaction),
@@ -278,7 +276,6 @@ def create_test_case():
 def list_test_cases():
     """
     Список тест-кейсов с cursor-based pagination.
-
     Параметры запроса:
       - q: поиск по name/description
       - tag: можно указать несколько (?tag=smoke&tag=regression)
@@ -344,12 +341,9 @@ def list_test_cases():
 def get_test_case(test_case_id: int):
     """
     GET /test_cases/<id>
-
     Возвращает один TestCase по id.
-
     Поддерживает query-параметр:
       - include_deleted=true|false  (по умолчанию false)
-
     Ответы:
       - 200 OK + JSON — если найден
       - 400 Bad Request — если параметры неверны
@@ -385,10 +379,8 @@ def get_test_case(test_case_id: int):
 def update_test_case(test_case_id: int):
     """
     PUT /test_cases/<id>
-
     Полный апдейт TestCase. Ожидается JSON-представление (такие же поля, как для POST/create).
     Семантика: полный replace — клиент отправляет желаемое состояние.
-
     Ответы:
       - 200 OK + JSON (обновлённый объект) — при успехе
       - 400 Bad Request — ошибка валидации payload

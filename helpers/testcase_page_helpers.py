@@ -62,7 +62,7 @@ def render_testcase_detail_partial(
     include_deleted: bool = False,
 ) -> str:
     """
-    Рендерит partial HTML для детальной панели тест-кейса.
+    Рендерит partial HTML для правой панели тест-кейса.
 
     Args:
         test_case_id: ID тест-кейса для редактирования
