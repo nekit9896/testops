@@ -1,7 +1,7 @@
 import os
 import tempfile
 import urllib
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 from sqlalchemy.exc import IntegrityError
 from werkzeug.datastructures import FileStorage
@@ -276,34 +276,6 @@ def list_attachments_for_test_case(test_case_id: int) -> List[Dict]:
     if not tc:
         return []
     return [serialize_attachment(a) for a in tc.attachments]
-
-
-def list_archives_for_test_case(test_case_id: int) -> List[Dict]:
-    """
-    Возвращает список всех вложений для указанного тест-кейса.
-    Каждый элемент — словарь с полями:
-      - id: int
-      - original_filename: str | None
-      - size: int | None
-      - download_path: относительный путь для скачивания через API (строка)
-
-    Если тест-кейс не найден, возвращается пустой список.
-    """
-    tc = TestCase.query.get(test_case_id)
-    if not tc:
-        return []
-
-    attachments: List[Dict[str, Any]] = []
-    for attachment in tc.attachments:
-        attachments.append(
-            {
-                "id": attachment.id,
-                "original_filename": attachment.original_filename,
-                "size": int(attachment.size) if attachment.size is not None else None,
-                "download_path": f"/test_cases/{test_case_id}/attachments/{attachment.id}?download=1",
-            }
-        )
-    return attachments
 
 
 def delete_attachment_by_object(attachment: Attachment) -> None:

@@ -1,14 +1,11 @@
-# Используем базовый образ с библиотеками
-FROM nekit9896/testops-dependencies:v0.1
+# Используем базовый образ с библиотеками и зависимостями
+FROM nekit9896/testops-dependencies:v0.2
 
 # Установка рабочего каталога
 WORKDIR /app
 
 # Копируем файлы проекта
 COPY . .
-
-# Устанавливаем зависимости через Poetry
-RUN poetry install --no-root
 
 # Устанавливаем переменные окружения
 ENV FLASK_APP=run.py

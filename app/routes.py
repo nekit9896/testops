@@ -1,15 +1,15 @@
 from typing import List, Optional
 
-import flask as flask
+import flask
 from sqlalchemy.exc import DatabaseError
 from werkzeug.routing import BuildError
 
 import constants as const
 import helpers.testcase_attachment_helpers as attach_help
 import helpers.testcase_helpers as testcase_help
+import helpers.testcase_page_helpers as page_help
 from app import db
 from app.clients import MinioClient
-from app.method_override import payload_from_form_or_json
 from app.models import Attachment, TestCase, TestResult
 from helpers import testrun_helpers
 from logger import init_logger
@@ -159,7 +159,7 @@ def delete_test_run(run_id):
     ORM (Object-Relational Mapping), в нашем случае SQLAlchemy, позволяет обращаться к базе данных так,
     будто это обычный Python-объект.
     Метод получает объект TestResult по его первичному ключу (run_id),
-    и если он существует, то отмечает его как удаленный (is_deleted = True)
+    и если объект существует, то delete_test_run помечает его как удаленный (is_deleted = True)
     и сохраняет изменения в базе данных.
     """
     test_result = TestResult.query.get(run_id)
@@ -180,7 +180,6 @@ def delete_test_run(run_id):
 def create_test_case():
     """
     Создаёт TestCase вместе с опциональными: steps, tags, suite_links.
-
     Ожидаемый JSON-body:
     {
       "name": "...",
@@ -197,14 +196,13 @@ def create_test_case():
           {"suite_name": "...", "position": 2}
       ]
     }
-
     Роль этой функции — обёртка HTTP <-> domain:
     - читает JSON,
     - вызывает create_test_case_from_payload (всё в transaction),
     - мапит доменные исключения на HTTP-коды,
     - возвращает 201 с Location и телом созданного ресурса.
     """
-    payload = payload_from_form_or_json()
+    payload = testcase_help.get_test_case_payload()
     if not payload:
         logger.error("create_test_case: пустой или некорректный JSON")
         flask.abort(400, description="Invalid or missing JSON body")
@@ -230,7 +228,7 @@ def create_test_case():
     except testcase_help.ConflictError as ce:
         logger.warning("Конфликт при создании TestCase", exc_info=ce)
         # Если клиент ожидает HTML — попробуем flash+redirect, но защитимся от отсутствия session/secret_key
-        if flask.flask.request.accept_mimetypes.accept_html:
+        if flask.request.accept_mimetypes.accept_html:
             try:
                 flask.flash("Название тест-кейса должно быть уникальным", "error")
                 return flask.redirect(flask.url_for("routes.test_cases_page"))
@@ -278,7 +276,6 @@ def create_test_case():
 def list_test_cases():
     """
     Список тест-кейсов с cursor-based pagination.
-
     Параметры запроса:
       - q: поиск по name/description
       - tag: можно указать несколько (?tag=smoke&tag=regression)
@@ -291,6 +288,10 @@ def list_test_cases():
     """
     q = flask.request.args.get("q")
     tags = flask.request.args.getlist("tag") or None
+    if not tags:
+        tags_csv = flask.request.args.get("tags", "").strip()
+        if tags_csv:
+            tags = [t.strip() for t in tags_csv.split(",") if t.strip()]
 
     suite_id_params = flask.request.args.getlist("suite_id") or None
     suite_ids: Optional[List[int]] = None
@@ -340,12 +341,9 @@ def list_test_cases():
 def get_test_case(test_case_id: int):
     """
     GET /test_cases/<id>
-
     Возвращает один TestCase по id.
-
     Поддерживает query-параметр:
       - include_deleted=true|false  (по умолчанию false)
-
     Ответы:
       - 200 OK + JSON — если найден
       - 400 Bad Request — если параметры неверны
@@ -381,10 +379,8 @@ def get_test_case(test_case_id: int):
 def update_test_case(test_case_id: int):
     """
     PUT /test_cases/<id>
-
     Полный апдейт TestCase. Ожидается JSON-представление (такие же поля, как для POST/create).
     Семантика: полный replace — клиент отправляет желаемое состояние.
-
     Ответы:
       - 200 OK + JSON (обновлённый объект) — при успехе
       - 400 Bad Request — ошибка валидации payload
@@ -393,10 +389,8 @@ def update_test_case(test_case_id: int):
       - 500 Internal Server Error — ошибки БД / прочие ошибки
     """
 
-    if flask.request.is_json:
-        payload = flask.request.get_json(silent=True)
-    else:
-        payload = payload_from_form_or_json()
+    logger.info("update_test_case: incoming request", test_case_id=test_case_id)
+    payload = testcase_help.get_test_case_payload()
 
     if not payload:
         logger.error("update_test_case: пустой или некорректный JSON")
@@ -436,7 +430,7 @@ def update_test_case(test_case_id: int):
     return flask.jsonify(body), 200
 
 
-@bp.route("/test_cases/<int:test_case_id>", methods=["DELETE"])
+@bp.route("/test_cases/<int:test_case_id>", methods=["DELETE", "POST"])
 def delete_test_case(test_case_id: int):
     """
     DELETE /test_cases/<id> — мягкое удаление (soft delete).
@@ -446,6 +440,8 @@ def delete_test_case(test_case_id: int):
       - 409 Conflict — ошибка целостности БД
       - 500 — прочие ошибки
     """
+    logger.info("delete_test_case: incoming request", test_case_id=test_case_id)
+
     try:
         testcase_help.soft_delete_test_case(test_case_id)
 
@@ -539,6 +535,9 @@ def upload_test_case_attachment(test_case_id: int):
 
 @bp.route("/test_cases/<int:test_case_id>/attachments", methods=["GET"])
 def list_test_case_attachments(test_case_id: int):
+    """
+    Получение списка вложений по айди тест кейса
+    """
     tc = TestCase.query.get(test_case_id)
     if not tc:
         flask.abort(404, description="TestCase не найден")
@@ -605,20 +604,20 @@ def get_test_case_attachment(test_case_id: int, attachment_id: int):
     return flask.jsonify(body), 200
 
 
-@bp.route("/test_cases/<int:test_case_id>/attachments/archives", methods=["GET"])
-def get_archives_for_test_case(test_case_id: int):
-    tc = TestCase.query.get(test_case_id)
-    if not tc:
-        flask.abort(404, description="TestCase не найден")
-
-    items = attach_help.list_archives_for_test_case(test_case_id)
-    return flask.jsonify({"items": items}), 200
-
-
 @bp.route(
-    "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>", methods=["DELETE"]
+    "/test_cases/<int:test_case_id>/attachments/<int:attachment_id>",
+    methods=["DELETE", "POST"],
 )
 def delete_test_case_attachment(test_case_id: int, attachment_id: int):
+    """
+    Удаление вложения по айди
+    """
+    logger.info(
+        "delete_test_case_attachment: incoming request",
+        test_case_id=test_case_id,
+        attachment_id=attachment_id,
+    )
+
     attachment = Attachment.query.get(attachment_id)
     if not attachment or attachment.test_case_id != test_case_id:
         flask.abort(404, description="Вложение не найдено")
@@ -721,8 +720,7 @@ def test_cases_page():
 
         # подготовим список всех тегов для dropdown на фронте (если модель Tag есть)
         try:
-            # если у вас есть флаг is_deleted для Tag — используйте его
-            all_tags = Tag.query.order_by(Tag.name).all()
+            all_tags = Tag.query.filter_by(is_deleted=False).order_by(Tag.name).all()
         except Exception:
             # fallback: если Tag нет / не поддерживает .order_by
             all_tags = []
@@ -753,3 +751,32 @@ def test_cases_page():
         all_tags=all_tags,  # <- список тегов для фронта
         selected_tags=",".join(tags) if tags else "",
     )
+
+
+@bp.route("/testcases/partial/detail", methods=["GET"])
+@bp.route("/testcases/partial/detail/<int:test_case_id>", methods=["GET"])
+def test_case_detail_partial(test_case_id: int = None):
+    """
+    Partial endpoint для AJAX-загрузки детальной панели тест-кейса.
+
+    Возвращает только HTML содержимое правой панели, без остальной страницы.
+
+    Query params:
+        - create: "1" или "true" - показать форму создания вместо редактирования
+        - include_deleted: "1" или "true" - показывать удалённые тест-кейсы
+
+    Returns:
+        HTML partial для вставки в #testcase-detail-panel
+    """
+    create_mode = flask.request.args.get("create") in ("1", "true", "True")
+    include_deleted = testcase_help.parse_bool_param(
+        flask.request.args.get("include_deleted")
+    )
+
+    html = page_help.render_testcase_detail_partial(
+        test_case_id=test_case_id,
+        create_mode=create_mode,
+        include_deleted=bool(include_deleted),
+    )
+
+    return html

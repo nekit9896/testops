@@ -7,7 +7,10 @@
 {% block main_container_class %}w-full px-0 py-6{% endblock %}
 
 {% block main %}
-<main class="min-h-[72vh] w-full px-4">
+<main id="testcases-root"
+      class="min-h-[72vh] w-full px-4"
+      data-all-tags='{{ all_tags|map(attribute="name")|list|tojson if all_tags is defined else "[]" }}'
+      data-selected-tags='{{ selected_tags|default(request.args.get("tags",""))|tojson }}'>
   <div class="w-full">
 
     <!-- Контейнер: три колонки в одной строке -->
@@ -56,7 +59,7 @@
       <section class="w-full lg:w-1/3 bg-white border rounded p-4 shadow-sm flex flex-col">
         <div class="flex items-center justify-between mb-3">
           <h2 class="text-xl font-semibold">Test Cases</h2>
-          <a href="{{ url_for('routes.test_cases_page', create='1') }}" class="px-3 py-1 bg-green-500 text-white rounded">Создать тест-кейс</a>
+          <a href="#" id="btn-create-testcase" class="px-3 py-1 bg-green-500 text-white rounded hover:bg-green-600">Создать тест-кейс</a>
         </div>
 
         <!-- ==== Форма поиска/фильтров ==== -->
@@ -73,18 +76,17 @@
             </button>
 
             <div id="tags-dropdown" class="absolute right-0 mt-2 w-72 max-h-64 overflow-auto bg-white border rounded shadow-lg p-2 hidden z-50">
-              <input id="tags-search" type="search" placeholder="Поиск тегов..." class="w-full px-2 py-1 border rounded text-sm mb-2" />
+              <div class="flex gap-2 mb-2">
+                <input id="tags-search" type="search" placeholder="Поиск тегов..." class="w-full px-2 py-1 border rounded text-sm" />
+                <button type="button" id="tags-clear" class="w-24 px-2 py-1 bg-gray-200 rounded text-sm">Сбросить</button>
+              </div>
+
               <div id="tags-list" class="text-sm space-y-1">
                 {% if all_tags is defined and all_tags %}
                   <div class="text-xs text-gray-500">Загрузка...</div>
                 {% else %}
                   <div class="text-xs text-gray-500">Теги не предоставлены сервером</div>
                 {% endif %}
-              </div>
-
-              <div class="mt-2 flex gap-2">
-                <button type="button" id="tags-apply" class="px-2 py-1 bg-blue-500 text-white rounded text-sm">Применить</button>
-                <button type="button" id="tags-clear" class="px-2 py-1 bg-gray-200 rounded text-sm">Очистить</button>
               </div>
             </div>
           </div>
@@ -97,10 +99,10 @@
 
           <div class="flex items-center gap-2 w-full">
             <label class="flex items-center gap-1 text-sm">
-              <input type="checkbox" name="include_deleted" value="1" {% if request.args.get('include_deleted') %}checked{% endif %}>
+              <input type="checkbox" name="include_deleted" value="1" data-auto-submit-filter {% if request.args.get('include_deleted') %}checked{% endif %}>
               <span class="text-sm text-gray-600">include_deleted</span>
             </label>
-            <select name="sort" class="px-2 py-1 border rounded bg-white text-sm">
+            <select name="sort" class="px-2 py-1 border rounded bg-white text-sm" data-auto-submit-filter>
               <option value="-created_at" {% if request.args.get('sort','-created_at') == '-created_at' %}selected{% endif %}>Сначала новые</option>
               <option value="created_at" {% if request.args.get('sort') == 'created_at' %}selected{% endif %}>Сначала старые</option>
             </select>
@@ -120,10 +122,10 @@
             </thead>
             <tbody id="cases-tbody">
               {% for tc in cases %}
-                <tr class="border-t hover:bg-gray-50">
+                <tr class="border-t hover:bg-gray-50 testcase-row{% if selected_case and selected_case.id == tc.id %} bg-blue-50{% endif %}" data-testcase-id="{{ tc.id }}">
                   <td class="p-2">{{ tc.id }}</td>
                   <td class="p-2">
-                    <a href="{{ url_for('routes.test_cases_page', selected_id=tc.id) }}" class="text-blue-600 hover:underline">
+                    <a href="#" class="text-blue-600 hover:underline testcase-link" data-testcase-id="{{ tc.id }}">
                       {{ tc.name }}
                     </a>
                   </td>
@@ -152,10 +154,10 @@
         <div class="mt-3 flex items-center justify-between text-sm text-gray-600" id="pagination">
           <div>
             {% if meta.prev_cursor %}
-              <a id="prev-link" href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.prev_cursor }}" class="px-2 py-1 border rounded">Prev</a>
+              <a id="prev-link" href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.prev_cursor }}" class="px-2 py-1 border rounded hidden">Prev</a>
             {% endif %}
             {% if meta.next_cursor %}
-              <a id="next-link" href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.next_cursor }}" class="px-2 py-1 border rounded ml-2">Next</a>
+              <a id="next-link" href="{{ url_for('routes.test_cases_page') }}?cursor={{ meta.next_cursor }}" class="px-3 py-1 bg-blue-500 text-white rounded hover:bg-blue-600 cursor-pointer">Загрузить ещё</a>
             {% endif %}
           </div>
           <div id="meta-count">{{ meta.count if meta and meta.count else '' }}</div>
@@ -163,652 +165,24 @@
       </section>
 
       <!-- RIGHT — занимает половину экрана -->
-      <aside class="w-full lg:w-1/2 bg-white border rounded p-4 shadow-sm overflow-auto">
-        {% if create %}
-          <!-- CREATE form -->
-          {% with messages = get_flashed_messages(with_categories=true) %}
-            {% if messages %}
-              <div class="mb-4">
-                {% for category, msg in messages %}
-                  <div class="p-3 rounded {{ 'bg-red-100 text-red-800' if category == 'error' else 'bg-green-100 text-green-800' }}">
-                    {{ msg }}
-                  </div>
-                {% endfor %}
-              </div>
-            {% endif %}
-          {% endwith %}
-          <h3 class="text-xl font-semibold mb-3">Создать тест-кейс</h3>
-
-          <form method="post" action="{{ url_for('routes.create_test_case') }}">
-            <div class="mb-3">
-              <label class="block font-medium">Название</label>
-              <input type="text" name="name" class="w-full border rounded px-3 py-2" required>
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium">Tags (через запятую)</label>
-              <input type="text" name="tags" class="w-full border rounded px-3 py-2" placeholder="regression, smoke">
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium">Suites (через запятую)</label>
-              <input type="text" name="suite_links" class="w-full border rounded px-3 py-2" placeholder="Suite A, Suite B">
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium">Предусловие</label>
-              <textarea name="preconditions" class="w-full border rounded px-3 py-2" rows="3"></textarea>
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium">Описание</label>
-              <textarea name="description" class="w-full border rounded px-3 py-2" rows="4"></textarea>
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium mb-2">Шаги</label>
-              <div id="steps-create" class="space-y-2">
-                <div class="flex gap-2 items-start">
-                  <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#1</div>
-                  <input type="text" name="steps[0][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
-                  <input type="text" name="steps[0][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
-                </div>
-              </div>
-              <div class="mt-2">
-                <button type="button" onclick="addCreateStep()" class="px-2 py-1 bg-green-500 text-white rounded">+ Шаг</button>
-              </div>
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium">Ожидаемый результат</label>
-              <textarea name="expected_result" class="w-full border rounded px-3 py-2" rows="2"></textarea>
-            </div>
-
-            <div class="flex justify-end gap-2 mt-4">
-              <button type="submit" class="px-3 py-1 bg-blue-500 text-white rounded">Создать</button>
-            </div>
-          </form>
-
-          <script>
-            (function(){
-              let idx = 1;
-
-              function makeStepHtml(i){
-                return `<div class="flex gap-2 items-start" data-step-index="${i}">
-                          <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${i+1}</div>
-                          <input type="text" name="steps[${i}][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
-                          <input type="text" name="steps[${i}][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
-                          <button type="button" class="px-3 py-1 bg-green-500 text-white rounded" onclick="insertCreateStepAt(${i}+1)">+</button>
-                          <button type="button" class="px-3 py-1 bg-red-500 text-white rounded" onclick="this.parentElement.remove()">−</button>
-                        </div>`;
-              }
-
-              window.addCreateStep = function(){
-                const container = document.getElementById('steps-create');
-                container.insertAdjacentHTML('beforeend', makeStepHtml(idx));
-                idx++;
-                reindexCreateSteps();
-              };
-
-              window.insertCreateStepAt = function(pos){
-                const container = document.getElementById('steps-create');
-                const node = document.createElement('div');
-                node.innerHTML = makeStepHtml(idx);
-                const children = container.children;
-                if (pos >= children.length) container.appendChild(node.firstElementChild);
-                else container.insertBefore(node.firstElementChild, children[pos]);
-                idx++;
-                reindexCreateSteps();
-              };
-
-              function reindexCreateSteps(){
-                const container = document.getElementById('steps-create');
-                Array.from(container.children).forEach((child, i) => {
-                  child.setAttribute('data-step-index', i);
-                  const action = child.querySelector('input[name^="steps"][name$="[action]"]') || child.querySelector('input:nth-of-type(1)');
-                  const expected = child.querySelector('input[name^="steps"][name$="[expected]"]') || child.querySelector('input:nth-of-type(2)');
-                  if(action) action.name = `steps[${i}][action]`;
-                  if(expected) expected.name = `steps[${i}][expected]`;
-                  const num = child.querySelector('.w-8');
-                  if(num) num.textContent = `#${i+1}`;
-                });
-                idx = container.children.length;
-              }
-            })();
-          </script>
-
-        {% elif selected_case %}
-          <!-- EDIT / VIEW -->
-
-          <form method="post" action="{{ url_for('routes.update_test_case', test_case_id=selected_case.id) }}">
-
-            <div class="mb-3 flex items-center gap-3">
-              <div class="text-sm text-gray-500 flex-none">ID {{ selected_case.id }}</div>
-              <input type="text" name="name" value="{{ selected_case.name }}" class="flex-1 border rounded px-3 py-2 text-lg font-bold" required>
-            </div>
-
-            <div class="mb-3 flex space-x-4">
-              <!-- Tags -->
-              <div class="flex-1 min-w-0">
-                <label class="block font-medium text-sm mb-1">Tags</label>
-                <textarea name="tags"
-                          rows="1"
-                          class="w-full border rounded px-2 py-1 text-sm resize-y overflow-auto break-words"
-                          placeholder="regression, smoke">{% for tt in selected_case.tags %}{% if tt.name is defined %}{{ tt.name }}{% else %}{{ tt }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
-              </div>
-
-              <!-- Suites -->
-              <div class="flex-1 min-w-0">
-                <label class="block font-medium text-sm mb-1">Suites</label>
-                <textarea name="suites"
-                          rows="1"
-                          class="w-full border rounded px-2 py-1 text-sm resize-y overflow-auto break-words"
-                          placeholder="Suite A, Suite B"
-                          >{% for ss in selected_case.suites %}{% if ss.name is defined %}{{ ss.name }}{% else %}{{ ss }}{% endif %}{% if not loop.last %}, {% endif %}{% endfor %}</textarea>
-              </div>
-            </div>
-
-            <div class="mb-3">
-              <label class="block font-medium">Предусловие</label>
-
-              {% set txt = selected_case.preconditions | default('') %}
-              {% set total = txt | length %}
-              {% set nlines = txt.splitlines() | length %}
-              {# меньшая ширина — используем меньше символов на строку #}
-              {% set chars_per_row = 80 %}
-              {% set est = ((total + chars_per_row - 1) // chars_per_row) %}
-              {% set rows_calc = [ (nlines if nlines > 0 else 1), est ] | max %}
-              {% set rows = [ rows_calc, 15 ] | min %}
-
-              <textarea
-                name="preconditions"
-                class="w-full border rounded px-3 py-2"
-                rows="{{ rows }}"
-                style="resize:vertical; overflow:auto;"
-              >{{ selected_case.preconditions }}</textarea>
-            </div>
-
-
-            <div class="mb-3">
-              <label class="block font-medium">Описание</label>
-
-              {# --- server-side estimate of rows (approx visual wrapping) --- #}
-              {% set txt = selected_case.description | default('') %}
-              {% set total = txt | length %}
-              {% set nlines = txt.splitlines() | length %}
-              {# пример: 100 символов в строке — подберите под ваш макет (см. примечание) #}
-              {% set chars_per_row = 100 %}
-              {% set est = ((total + chars_per_row - 1) // chars_per_row) %}
-              {% set rows_calc = [ (nlines if nlines > 0 else 1), est ] | max %}
-              {% set rows = [ rows_calc, 40 ] | min %}
-
-              <textarea
-                name="description"
-                class="w-full border rounded px-3 py-2"
-                rows="{{ rows }}"
-                style="resize:vertical; overflow:auto;"
-              >{{ selected_case.description }}</textarea>
-            </div>
-
-            <div class="mb-3">
-              <div class="flex items-center justify-between mb-2">
-                <h4 class="font-semibold">Шаги</h4>
-                <!-- кнопка добавления шага, видимая всегда -->
-                <button type="button" id="btn-add-step-top" class="px-2 py-1 bg-green-500 text-white text-sm rounded">+ Шаг</button>
-              </div>
-              <div id="steps-edit" class="space-y-3">
-                {% for s in selected_case.steps %}
-                  <div class="border rounded p-2">
-                    <div class="flex gap-2 items-start">
-
-                      <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#{{ s.position if s.position is not none else loop.index }}</div>
-
-                      {# --- ACTION textarea autosize estimate --- #}
-                      {% set act_txt = (s.action | default('')) %}
-                      {% set act_total = act_txt | length %}
-                      {% set act_nlines = act_txt.splitlines() | length %}
-                      {% set act_chars_per_row = 80 %}
-                      {% set act_est = ((act_total + act_chars_per_row - 1) // act_chars_per_row) %}
-                      {% set act_rows_calc = [ (act_nlines if act_nlines > 0 else 1), act_est ] | max %}
-                      {% set act_rows = [ act_rows_calc, 10 ] | min %}
-
-                      <textarea name="steps[{{ loop.index0 }}][action]" placeholder="Action"
-                                class="flex-1 border rounded text-sm px-2 py-1"
-                                rows="{{ act_rows }}">{{ s.action }}</textarea>
-
-                      {# --- EXPECTED textarea autosize estimate --- #}
-                      {% set exp_txt = (s.expected | default('')) %}
-                      {% set exp_total = exp_txt | length %}
-                      {% set exp_nlines = exp_txt.splitlines() | length %}
-                      {% set exp_chars_per_row = 80 %}
-                      {% set exp_est = ((exp_total + exp_chars_per_row - 1) // exp_chars_per_row) %}
-                      {% set exp_rows_calc = [ (exp_nlines if exp_nlines > 0 else 1), exp_est ] | max %}
-                      {% set exp_rows = [ exp_rows_calc, 10 ] | min %}
-
-                      <textarea name="steps[{{ loop.index0 }}][expected]" placeholder="Expected"
-                                class="flex-1 border rounded text-sm px-2 py-1"
-                                rows="{{ exp_rows }}">{{ s.expected }}</textarea>
-
-                      {% if confirm_delete_step is defined and confirm_delete_step == loop.index0 %}
-                        <div class="flex flex-col gap-1">
-                          <div class="text-sm text-red-600">Подтвердите удаление шага #{{ loop.index }}</div>
-                          <div class="flex gap-1">
-                            <button type="submit" name="confirm_delete_step" value="{{ loop.index0 }}" class="px-2 py-1 bg-red-600 text-white rounded text-sm">Удалить</button>
-                            <button type="submit" name="cancel_confirm" value="1" class="px-2 py-1 bg-gray-200 rounded text-sm">Отмена</button>
-                          </div>
-                        </div>
-                      {% else %}
-                        <button type="button" class="px-3 py-1 bg-green-500 text-white rounded btn-insert-step" data-insert-index="{{ loop.index0 }}">+</button>
-                        <button type="button" class="px-3 py-1 bg-red-500 text-white rounded btn-delete-step" data-delete-index="{{ loop.index0 }}">−</button>
-                      {% endif %}
-
-                    </div>
-                  </div>
-                {% endfor %}
-              </div>
-
-              <div class="mb-3">
-              <label class="block font-medium">Ожидаемый результат</label>
-
-              {% set txt = selected_case.expected_result | default('') %}
-              {% set total = txt | length %}
-              {% set nlines = txt.splitlines() | length %}
-              {% set chars_per_row = 100 %}
-              {% set est = ((total + chars_per_row - 1) // chars_per_row) %}
-              {% set rows_calc = [ (nlines if nlines > 0 else 1), est ] | max %}
-              {% set rows = [ rows_calc, 40 ] | min %}
-
-              <textarea
-                name="expected_result"
-                class="w-full border rounded px-3 py-2"
-                rows="{{ rows }}"
-                style="resize:vertical; overflow:auto;"
-              >{{ selected_case.expected_result }}</textarea>
-              </div>
-            </div>
-
-            <!-- Дополнительная информация -->
-            <div class="mb-3">
-              <div class="text-xs текст-gray-500">
-                Created: {% if selected_case.created_at %}{{ selected_case.created_at.strftime('%Y-%m-%d %H:%M:%S') }}{% endif %}
-                {% if selected_case.updated_at %}
-                  <br>Updated: {{ selected_case.updated_at.strftime('%Y-%m-%d %H:%M:%S') }}
-                {% endif %}
-              </div>
-            </div>
-
-            <div class="mt-4 flex justify-between">
-              <button type="submit" class="px-3 py-1 bg-blue-500 text-white rounded">Сохранить изменения</button>
-
-              <button
-                type="submit"
-                formaction="{{ url_for('routes.get_test_case', test_case_id=selected_case.id) }}"
-                formmethod="post"
-                name="_method"
-                value="DELETE"
-                class="px-3 py-1 bg-red-500 text-white rounded"
-                data-confirm="Удалить тест-кейс?">Удалить тест-кейс</button>
-            </div>
-          </form>
-
-          <script>
-            (function(){
-              let editIndex = {{ selected_case.steps|length }};
-              window.addEditStep = function(){
-                const container = document.getElementById('steps-edit');
-                const div = document.createElement('div');
-                div.className = 'border rounded p-2';
-                div.innerHTML = `<div class="flex gap-2 items-start">
-                  <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${editIndex + 1}</div>
-                  <input type="text" name="steps[${editIndex}][action]" placeholder="Action" class="flex-1 border rounded px-2 py-1">
-                  <input type="text" name="steps[${editIndex}][expected]" placeholder="Expected" class="flex-1 border rounded px-2 py-1">
-                  <button type="button" onclick="this.parentElement.parentElement.remove()" class="px-2 py-1 bg-red-500 text-white rounded">−</button>
-                </div>`;
-                container.appendChild(div);
-                editIndex++;
-              };
-            })();
-          </script>
-
-          <!-- === Вложения — отдельный блок (вне формы update/create) чтобы upload не ломал update === -->
-          <div class="mt-6 mb-4">
-            <h4 class="font-semibold mb-2">Вложения</h4>
-
-            <form id="upload-form" action="{{ url_for('routes.upload_test_case_attachment', test_case_id=selected_case.id) }}" method="post" enctype="multipart/form-data" class="mb-3">
-              <input type="file" name="file" class="block w-full border px-2 py-1 rounded bg-white" />
-              <div class="mt-2 flex gap-2">
-                <button type="submit" class="px-3 py-1 bg-blue-500 text-white rounded">Загрузить вложение</button>
-              </div>
-            </form>
-
-            <div class="space-y-2">
-              {% for a in selected_case.attachments %}
-                <div class="flex items-center justify-between border rounded p-2">
-                  <div>
-                    <div class="font-medium">{{ a.original_filename }}</div>
-                    <div class="text-xs text-gray-500">{{ a.size }} bytes • {{ a.content_type }}</div>
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <a href="{{ url_for('routes.get_test_case_attachment', test_case_id=selected_case.id, attachment_id=a.id) }}?download=1"
-                       class="px-2 py-1 bg-blue-500 text-white rounded text-xs">Download</a>
-
-                    <form action="{{ url_for('routes.get_test_case_attachment', test_case_id=selected_case.id, attachment_id=a.id) }}" method="post">
-                      <input type="hidden" name="_method" value="DELETE">
-                      <button type="submit" class="px-2 py-1 bg-red-500 text-white rounded text-xs" data-confirm="Удалить вложение?">Delete</button>
-                    </form>
-                  </div>
-                </div>
-              {% endfor %}
-            </div>
-          </div>
-        {% else %}
-          <div class="text-gray-500">Выберите тест-кейс из списка или создайте новый.</div>
-        {% endif %}
+      <aside id="testcase-detail-panel" class="w-full lg:w-1/2 bg-white border rounded p-4 shadow-sm overflow-auto">
+        {% include 'partials/testcase_detail.html' %}
       </aside>
 
     </div>
   </div>
 
-  {# =========== Inline all_tags как простого массива имён (без SQLAlchemy-объектов) =========== #}
-  {% if all_tags is defined %}
-  <script>
-    // all_tags передано из контроллера как список Tag объектов.
-    // Мы инлайним только имена, чтобы избежать сериализации ORM-объектов.
-    window.__ALL_TAGS__ = {{ all_tags|map(attribute='name')|list|tojson }};
-    window.__SELECTED_TAGS__ = {{ selected_tags|default(request.args.get('tags',''))|tojson }};
-  </script>
-  {% else %}
-  <script>
-    window.__ALL_TAGS__ = [];
-    window.__SELECTED_TAGS__ = {{ request.args.get('tags','')|tojson }};
-  </script>
-  {% endif %}
-
-  <!-- ======= JS для dropdown тегов ======= -->
-  <script>
-  document.addEventListener('DOMContentLoaded', function(){
-    const root = document.getElementById('tags-filter-root');
-    if(!root) return;
-
-    const toggle = document.getElementById('tags-toggle');
-    const dropdown = document.getElementById('tags-dropdown');
-    const listEl = document.getElementById('tags-list');
-    const searchInput = document.getElementById('tags-search');
-    const applyBtn = document.getElementById('tags-apply');
-    const clearBtn = document.getElementById('tags-clear');
-    const hidden = document.getElementById('tags-hidden');
-    const summary = document.getElementById('tags-summary');
-
-    // Преобразуем inlined array names -> objects {name}
-    let tags = (window.__ALL_TAGS__ || []).map(n => ({ name: n }));
-
-    // Preselected from server-side
-    const initialCsv = (window.__SELECTED_TAGS__ || '') ? window.__SELECTED_TAGS__ : (hidden && hidden.value ? hidden.value : '');
-    const initialSelectedArr = initialCsv ? initialCsv.split(',').map(s => s.trim()).filter(Boolean) : [];
-    let selected = new Set(initialSelectedArr);
-
-    function pluralizeCount(n) {
-      if (n === 1) return '1 тег';
-      return `${n} тегов`;
-    }
-
-    function updateSummary(){
-      if(selected.size === 0) summary.textContent = 'Теги';
-      else if(selected.size === 1) summary.textContent = Array.from(selected)[0];
-      else summary.textContent = pluralizeCount(selected.size);
-    }
-
-    function renderList(filterText=''){
-      listEl.innerHTML = '';
-      const lower = (filterText || '').toLowerCase();
-
-      if(!tags || tags.length === 0){
-        listEl.innerHTML = '<div class="text-xs text-gray-500">Теги недоступны</div>';
-        return;
-      }
-
-      const filtered = tags.filter(t => (t.name || '').toLowerCase().includes(lower));
-      if(filtered.length === 0){
-        listEl.innerHTML = '<div class="text-xs text-gray-500">Теги не найдены</div>';
-        return;
-      }
-
-      filtered.forEach((t, idx) => {
-        const safeName = (t.name || '').replace(/"/g, '&quot;');
-        const id = 'tag-cb-' + idx;
-        const div = document.createElement('div');
-        div.className = 'flex items-center gap-2';
-        const checked = selected.has(t.name) ? 'checked' : '';
-        div.innerHTML = `<label class="flex items-center gap-2 w-full cursor-pointer">
-            <input type="checkbox" class="tag-checkbox" data-name="${safeName}" id="${id}" ${checked}/>
-            <span class="truncate">${t.name}</span>
-          </label>`;
-        listEl.appendChild(div);
-      });
-    }
-
-    // Открытие/закрытие
-    toggle.addEventListener('click', function(e){
-      e.stopPropagation();
-      dropdown.classList.toggle('hidden');
-      if(!dropdown.classList.contains('hidden')){
-        searchInput.focus();
-        renderList(searchInput.value || '');
-      }
-    });
-
-    // Делегирование изменений чекбоксов
-    listEl.addEventListener('change', function(e){
-      const cb = e.target.closest('.tag-checkbox');
-      if(!cb) return;
-      const name = cb.dataset.name;
-      if(cb.checked) selected.add(name);
-      else selected.delete(name);
-      updateSummary();
-    });
-
-    // Поиск
-    searchInput.addEventListener('input', function(){
-      renderList(this.value || '');
-    });
-
-    // Apply: записать в hidden и submit ближайшей формы
-    applyBtn.addEventListener('click', function(){
-      const arr = Array.from(selected);
-      hidden.value = arr.join(',');
-      const form = root.closest('form');
-      if(form){
-        form.submit();
-      } else {
-        const params = new URLSearchParams(window.location.search);
-        if(arr.length) params.set('tags', arr.join(','));
-        else params.delete('tags');
-        window.location.search = params.toString();
-      }
-    });
-
-    // Clear
-    clearBtn.addEventListener('click', function(){
-      selected.clear();
-      hidden.value = '';
-      renderList(searchInput.value || '');
-      updateSummary();
-    });
-
-    // Close dropdown on outside click
-    document.addEventListener('click', function(e){
-      if(!root.contains(e.target)) dropdown.classList.add('hidden');
-    });
-
-    // init
-    updateSummary();
-    renderList('');
-  });
-  </script>
-
-  <!-- Твои существующие скрипты (reindex steps, infinite load) не тронуты ниже -->
-  <script>
-  document.addEventListener('DOMContentLoaded', function(){
-
-    const container = document.getElementById('steps-edit');
-    if(!container) return;
-
-    function createStepNode(idx, action='', expected=''){
-      const wrapper = document.createElement('div');
-      wrapper.className = 'border rounded p-2';
-      wrapper.innerHTML = `<div class="flex gap-2 items-start">
-        <div class="w-8 text-sm text-gray-600 pt-2 flex-none">#${idx+1}</div>
-        <textarea name="steps[${idx}][action]" placeholder="Action" class="flex-1 border rounded text-sm px-2 py-1" rows="1">${action || ''}</textarea>
-        <textarea name="steps[${idx}][expected]" placeholder="Expected" class="flex-1 border rounded text-sm px-2 py-1" rows="1">${expected || ''}</textarea>
-        <button type="button" class="px-3 py-1 bg-green-500 text-white rounded btn-insert-step" data-insert-index="${idx}">+</button>
-        <button type="button" class="px-3 py-1 bg-red-500 text-white rounded btn-delete-step" data-delete-index="${idx}">−</button>
-      </div>`;
-      return wrapper;
-    }
-
-    function reindexSteps(){
-      Array.from(container.children).forEach((child, i) => {
-        const num = child.querySelector('.w-8');
-        if(num) num.textContent = `#${i+1}`;
-
-        const action = child.querySelector('textarea[name$="[action]"], input[name$="[action]"]');
-        const expected = child.querySelector('textarea[name$="[expected]"], input[name$="[expected]"]');
-        if(action) action.name = `steps[${i}][action]`;
-        if(expected) expected.name = `steps[${i}][expected]`;
-
-        const ins = child.querySelector('.btn-insert-step');
-        const del = child.querySelector('.btn-delete-step');
-        if(ins) ins.dataset.insertIndex = i;
-        if(del) del.dataset.deleteIndex = i;
-      });
-
-      // синхронизируем глобальный индекс (если где-то используется)
-      window.editIndex = container.children.length;
-    }
-
-    // кнопка в заголовке — добавляет шаг в конец (если список пуст, появится первый элемент)
-    const topAddBtn = document.getElementById('btn-add-step-top');
-    if(topAddBtn){
-      topAddBtn.addEventListener('click', function(){
-        const children = container.children;
-        const pos = children.length; // вставляем в конец
-        const newNode = createStepNode(pos);
-        container.appendChild(newNode);
-        reindexSteps();
-        // если у вас были focus/scroll-заметки — можно поставить фокус в action:
-        const last = container.children[container.children.length - 1];
-        const actionField = last.querySelector('textarea[name$="[action]"], input[name$="[action]"]');
-        if(actionField) actionField.focus();
-      });
-    }
-
-    // delegation: insert / delete buttons
-    container.addEventListener('click', function(ev){
-      const ins = ev.target.closest('.btn-insert-step');
-      if(ins){
-        const idx = Number(ins.dataset.insertIndex);
-        const pos = idx + 1; // вставляем *после* текущего шага
-        const newNode = createStepNode(idx); // индекс временный, реиндексация потом поправит имена
-        const children = container.children;
-        if(pos >= children.length) container.appendChild(newNode);
-        else container.insertBefore(newNode, children[pos]);
-        reindexSteps();
-        return;
-      }
-
-      const del = ev.target.closest('.btn-delete-step');
-      if(del){
-        const idx = Number(del.dataset.deleteIndex);
-        if(!confirm(`Удалить шаг #${idx+1}?`)) return;
-        const child = container.children[idx];
-        if(child) child.remove();
-        reindexSteps();
-        return;
-      }
-    });
-
-  document.addEventListener('click', function(e){
-    const btn = e.target.closest('button[data-confirm]');
-    if(!btn) return;
-
-    // если кнопка не внутри формы — просто показать confirm и если отмена — ничего не делать
-    const msg = btn.dataset.confirm || 'Подтвердите действие';
-    if(!confirm(msg)){
-      e.preventDefault();
-      e.stopImmediatePropagation();
-      return false;
-    }
-    // иначе — позволяем кнопке продолжить (отправить форму)
-    // ничего дополнительно не делаем здесь
-  }, true); // use capture=true чтобы перехватить до submit-обработчиков
-  });
-  </script>
-
-  <script>
-  document.addEventListener('DOMContentLoaded', function () {
-    const nextLink = document.getElementById('next-link');
-    const tbody = document.getElementById('cases-tbody');
-    const metaCountEl = document.getElementById('meta-count');
-    const pagination = document.getElementById('pagination');
-
-    if (!nextLink || !tbody) return;
-
-    let loading = false;
-    const spinner = document.createElement('span');
-    spinner.id = 'next-spinner';
-    spinner.textContent = ' Загрузка...';
-    spinner.className = 'text-gray-600';
-
-    nextLink.addEventListener('click', async function (ev) {
-      ev.preventDefault();
-      ev.stopPropagation();
-      if (loading) return;
-      loading = true;
-      nextLink.parentElement.appendChild(spinner);
-
-      try {
-        const res = await fetch(nextLink.href, { credentials: 'same-origin' });
-        if (!res.ok) throw new Error('Network response was not ok: ' + res.status);
-        const html = await res.text();
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(html, 'text/html');
-
-        const incomingTbody = doc.querySelector('#cases-tbody');
-        if (incomingTbody) {
-          const rows = Array.from(incomingTbody.querySelectorAll('tr'));
-          rows.forEach(row => {
-            tbody.appendChild(row.cloneNode(true));
-          });
-        } else {
-          const fallbackRows = doc.querySelectorAll('table tbody tr');
-          fallbackRows.forEach(r => tbody.appendChild(r.cloneNode(true)));
-        }
-
-        const newNext = doc.querySelector('#next-link');
-        if (newNext && newNext.href) {
-          nextLink.href = newNext.href;
-        } else {
-          nextLink.remove();
-        }
-
-        const newPrev = doc.querySelector('#prev-link');
-        if (newPrev) {
-          const prevEl = document.getElementById('prev-link');
-          if (prevEl) prevEl.href = newPrev.href;
-        }
-
-        const newCount = doc.getElementById('meta-count');
-        if (newCount && metaCountEl) {
-          metaCountEl.textContent = newCount.textContent;
-        }
-      } catch (err) {
-        console.error('Ошибка при подгрузке следующей страницы:', err);
-      } finally {
-        if (spinner.parentElement) spinner.remove();
-        loading = false;
-      }
-    });
-  });
-  </script>
+  <!-- JS модули для страницы тест-кейсов -->
+  <script defer src="{{ url_for('static', filename='js/common/namespace.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/common/toast.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/common/api.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/common/utils.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/steps.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/forms.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/attachments.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/filters.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/detail.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/pagination.js') }}"></script>
+  <script defer src="{{ url_for('static', filename='js/testcases/init.js') }}"></script>
 </main>
 {% endblock %}

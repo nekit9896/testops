@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional, Tuple, Union
 
+import flask
 from flask import current_app
 from sqlalchemy import and_, asc, desc, func, or_
 from sqlalchemy.exc import IntegrityError, InvalidRequestError
@@ -15,7 +17,9 @@ import app.models as models
 from app import db
 from app.clients import MinioClient
 from constants import ASCII_CODING, ENCODING, TESTCASE_PER_PAGE_LIMIT
+from logger import init_logger
 
+logger = init_logger()
 minio_client = MinioClient()
 
 
@@ -24,7 +28,6 @@ minio_client = MinioClient()
 # -------------------------------
 class TestCaseError(Exception):
     """Базовое исключение для ошибок, связанных с TestCase.
-
     Используется для того, чтобы маршруты могли перехватывать и корректно
     сопоставлять исключения с HTTP-ответами.
     """
@@ -32,7 +35,6 @@ class TestCaseError(Exception):
 
 class ValidationError(TestCaseError):
     """Ошибка валидации входных данных (эквивалент HTTP 400).
-
     Бросается при неверной структуре payload, отсутствующих обязательных полях
     или при логических конфликтах (например, дубликат позиции шага).
     """
@@ -44,7 +46,6 @@ class NotFoundError(TestCaseError):
 
 class ConflictError(TestCaseError):
     """Ошибка конфликта (эквивалент HTTP 409).
-
     Используется для того, чтобы узнать о нарушении например уникальности имени тест-кейса.
     """
 
@@ -54,21 +55,44 @@ class ConflictError(TestCaseError):
 # -------------------------------
 def _ensure_list(value: Optional[Iterable]) -> List:
     """Гарантирует, что возвращается список (не None).
-
     Если value == None возвращаем пустой список. Удобно для полей payload,
     которые могут быть опущены в запросе.
     """
     return list(value) if value is not None else []
 
 
+def _joinedload_case_relations() -> Tuple[Any, ...]:
+    """Сбор общих joinedload-опций для TestCase."""
+    return (
+        joinedload(models.TestCase.tags),
+        joinedload(models.TestCase.steps),
+        joinedload(models.TestCase.suite_links).joinedload(models.TestCaseSuite.suite),
+    )
+
+
+def _load_test_case(
+    test_case_id: int, *, include_deleted: bool = False
+) -> Optional[models.TestCase]:
+    """Единая точка загрузки TestCase с нужными связями."""
+    query = models.TestCase.query.options(*_joinedload_case_relations())
+    tc = query.get(test_case_id)
+    if not tc:
+        return None
+    if tc.is_deleted and not include_deleted:
+        return None
+    return tc
+
+
 def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Базовая валидация и нормализация полей payload.
-
     Проверяем обязательное поле 'name' и нормализуем опциональные поля.
     Возвращаем нормализованный словарь для дальнейшей обработки.
     """
     name = payload.get("name")
     if not name or not isinstance(name, str) or not name.strip():
+        logger.warning(
+            "ValidationError: Поле 'name' обязательно и не должно быть пустой строкой"
+        )
         raise ValidationError("Поле 'name' обязательно и не должно быть пустой строкой")
 
     normalized = {
@@ -84,10 +108,22 @@ def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # Простые валидации типов
     if not isinstance(normalized["steps"], list):
+        logger.warning(
+            "Ошибка валидации: 'steps' не список (type=%s)",
+            type(normalized["steps"]).__name__,
+        )
         raise ValidationError("Поле 'steps' должно быть списком")
     if not isinstance(normalized["tags"], list):
+        logger.warning(
+            "Ошибка валидации: 'tags' не список (type=%s)",
+            type(normalized["tags"]).__name__,
+        )
         raise ValidationError("Поле 'tags' должно быть списком")
     if not isinstance(normalized["suite_links"], list):
+        logger.warning(
+            "Ошибка валидации: 'suite_links' не список (type=%s)",
+            type(normalized["suite_links"]).__name__,
+        )
         raise ValidationError("Поле 'suite_links' должно быть списком")
 
     return normalized
@@ -108,7 +144,6 @@ def _get_tag_by_name(name: str) -> Optional[models.Tag]:
 
 def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
     """Преобразует входное представление тега в нормализованную форму.
-
     Принимается либо строка (имя тега), либо объект {"id": ...} / {"name": ...}.
     Если вход пустой/пустая строка — возвращается {"skip": True}.
     """
@@ -124,6 +159,7 @@ def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
                 else {"skip": True}
             )
     # Неправильный формат
+    logger.warning("Ошибка валидации: некорректный формат тега %r", raw)
     raise ValidationError(
         "Каждый тег должен быть строкой (именем) или объектом, содержащим 'id' или 'name'"
     )
@@ -131,12 +167,12 @@ def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
 
 def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
     """Возвращает существующий Tag или создаёт новый по имени.
-
     Поведение:
-    - Если передан 'id' и тег найден -> возвращаем его.
+    - Если передан 'id' и тег найден -> возвращаем его
     - Если передан 'id' и тег НЕ найден -> возвращаем None (и логируем),
       чтобы вызывающий код мог решить — пропустить или считать это ошибкой.
     - Если передан 'name' -> ищем по имени, создаём, если нет.
+      Если тег найден и был удалён (is_deleted=True) -> восстанавливаем его.
     """
     # Пытаемся взять тег по id
     if "id" in normalized:
@@ -144,6 +180,10 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
         if not tag:
             # Чтобы не ломать весь payload.
             return None
+        # Восстанавливаем тег, если он был удалён
+        if tag.is_deleted:
+            tag.is_deleted = False
+            db.session.add(tag)
         return tag
 
     # Создание/поиск по имени
@@ -151,6 +191,10 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
         tag_name = normalized["name"]
         tag = _get_tag_by_name(tag_name)
         if tag:
+            # Восстанавливаем тег, если он был удалён
+            if tag.is_deleted:
+                tag.is_deleted = False
+                db.session.add(tag)
             return tag
 
         tag = models.Tag(name=tag_name)
@@ -163,11 +207,18 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
             db.session.rollback()
             tag = _get_tag_by_name(tag_name)
             if tag:
+                # Восстанавливаем тег, если он был удалён
+                if tag.is_deleted:
+                    tag.is_deleted = False
+                    db.session.add(tag)
                 return tag
             # Если всё ещё нет — пробрасываем, пусть вызывающий код решает.
             raise
         return tag
 
+    logger.warning(
+        "Ошибка валидации: нормализованный тег без id и name: %r", normalized
+    )
     raise ValidationError("Введенный тег не прошел валидацию")
 
 
@@ -176,10 +227,13 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
 # -------------------------------
 def _normalize_suite_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Нормализация одного элемента suite_links.
-
     Убеждаемся, что на вход — объект и извлекаем ожидаемые поля: suite_id / suite_name / position.
     """
     if not isinstance(raw, dict):
+        logger.warning(
+            "Ошибка валидации: suite_link не словарь (type=%s)",
+            type(raw).__name__,
+        )
         raise ValidationError("Каждая suite_link должна быть объектом")
 
     out: Dict[str, Any] = {}
@@ -191,6 +245,10 @@ def _normalize_suite_input(raw: Dict[str, Any]) -> Dict[str, Any]:
         try:
             out["position"] = int(raw["position"])
         except Exception:
+            logger.warning(
+                "Ошибка валидации: suite_link.position не int (value=%r)",
+                raw.get("position"),
+            )
             raise ValidationError("'position' в suite_links должно быть целым числом")
     return out
 
@@ -207,7 +265,6 @@ def _get_suite_by_name(name: str) -> Optional[models.TestSuite]:
 
 def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuite]:
     """Возвращает существующий TestSuite или создаёт новый по имени.
-
     Поведение:
     - Если передан 'suite_id' и сьют найден -> возвращаем его.
     - Если передан 'suite_id' и сьют НЕ найден -> возвращаем None (и логируем),
@@ -219,12 +276,14 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuit
         if not suite:
             # Не бросаем NotFoundError, а возвращаем None
             return None
+        db.session.add(suite)
         return suite
 
     if "suite_name" in normalized and normalized["suite_name"]:
         name = normalized["suite_name"]
         suite = _get_suite_by_name(name)
         if suite:
+            db.session.add(suite)
             return suite
         now = datetime.now(timezone.utc)
         suite = models.TestSuite(name=name, created_at=now, updated_at=now)
@@ -239,6 +298,9 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuit
             raise
         return suite
 
+    logger.warning(
+        "Ошибка валидации: suite_link без suite_id и suite_name: %r", normalized
+    )
     raise ValidationError(
         "Каждый suite_link должен содержать 'suite_id' или 'suite_name'"
     )
@@ -249,14 +311,19 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuit
 # -------------------------------
 def _normalize_step_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     """Нормализация одного шага тест-кейса.
-
     Убедимся, что step — объект и содержит непустой 'action'.
     Позиция может быть опущена — тогда будет назначена автоматически позже.
     """
     if not isinstance(raw, dict):
+        logger.warning(
+            "Ошибка валидации: step не словарь (type=%s)", type(raw).__name__
+        )
         raise ValidationError("Каждый step должен быть словарем")
     action = raw.get("action")
     if not action or not isinstance(action, str) or not action.strip():
+        logger.warning(
+            "Ошибка валидации: action шага пустой/некорректный (value=%r)", action
+        )
         raise ValidationError("Каждый step должен содержать не пустой 'action'")
     out = {
         "action": action.strip(),
@@ -302,9 +369,6 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                     continue
                 tag = _get_or_create_tag(normalized)
                 if tag is None:
-                    logger = __import__(
-                        "logger"
-                    ).init_logger()  # аккуратно получить логгер без циклических импортов
                     logger.warning(
                         f"Тег, на который ссылается id={normalized.get('id')} не найден — пропускаем, "
                         f"тэги не обязательны"
@@ -328,6 +392,10 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                     else auto_position
                 )
                 if position_step_input in positions_seen:
+                    logger.warning(
+                        "Ошибка валидации: дубликат позиции шага %s при создании",
+                        position_step_input,
+                    )
                     raise ValidationError(
                         f"Дубликат позиции шага: {position_step_input}"
                     )
@@ -349,9 +417,6 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                 normalized = _normalize_suite_input(raw_sl)
                 suite = _get_or_create_suite(normalized)
                 if suite is None:
-                    # Если клиент указал suite_id, которого нет — пропускаем и логируем.
-                    # Логер берём аккуратно, чтобы не было циклических импортов.
-                    logger = __import__("logger").init_logger()
                     logger.warning(
                         f"TestSuite, на который ссылается id={normalized.get('suite_id')} не найден — "
                         f"пропускаем, для тест кейсов не обязательны сьюты"
@@ -392,7 +457,6 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
 # -------------------------------
 def serialize_test_case(tc: models.TestCase) -> Dict[str, Any]:
     """Преобразует TestCase в JSON-совместимый словарь.
-
     Сериализуем только публичные и необходимые поля — без лишних внутренних атрибутов.
     Сортируем шаги по позиции для детерминированности.
     """
@@ -491,7 +555,6 @@ def get_test_cases_cursored(
 ) -> Tuple[List["models.TestCase"], Dict[str, Any]]:
     """
     Возвращает (items, meta) используя cursor-based pagination.
-
     Поддерживаемые параметры:
       - q: частичный поиск по name и description (case-insensitive)
       - tags: список имён тегов (фильтр ANY)
@@ -622,7 +685,6 @@ def get_test_case_by_id(
 ) -> models.TestCase:
     """
     Получает TestCase по его id с eager-loading связанных сущностей.
-
     Поведение:
       - Если TestCase с переданным id не найден -> бросает NotFoundError.
       - Если TestCase найден, но помечен is_deleted и include_deleted == False -> тоже бросает NotFoundError.
@@ -630,29 +692,22 @@ def get_test_case_by_id(
     Параметры:
       - test_case_id: int — идентификатор искомого TestCase.
       - include_deleted: bool — если True, разрешаем возвращать помеченные как удалённые записи.
-
     Использует joinedload для подгрузки связей: steps, tags, suite_links->suite.
     """
     # Валидация аргумента
     if not isinstance(test_case_id, int) or test_case_id <= 0:
+        logger.warning(
+            "Ошибка валидации: некорректный test_case_id %r в get_test_case_by_id",
+            test_case_id,
+        )
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
-    # Используем joinedload, чтобы сразу подгрузить все нужные связи и избежать N+1
-    query = models.TestCase.query.options(
-        joinedload(models.TestCase.steps),
-        joinedload(models.TestCase.tags),
-        joinedload(models.TestCase.suite_links).joinedload(models.TestCaseSuite.suite),
-    )
-
-    # Получаем объект
-    test_case = query.get(test_case_id)
-
+    test_case = _load_test_case(test_case_id, include_deleted=include_deleted)
     if not test_case:
-        raise NotFoundError(f"TestCase с id={test_case_id} не найден")
-
-    # Если найден, но помечен как удалённый — по умолчанию скрываем
-    if test_case.is_deleted and not include_deleted:
-        raise NotFoundError(f"TestCase с id={test_case_id} удален")
+        raise NotFoundError(
+            f"TestCase с id={test_case_id} "
+            f"{'удален' if include_deleted is False else 'не найден'}"
+        )
 
     return test_case
 
@@ -668,8 +723,6 @@ def _transaction_context():
     до входа в этот контекст (например db.session.get_bind(), db.session.connection()
     или любые SELECT), т.к. они вызовут implicit BEGIN.
     """
-    logger = __import__("logger").init_logger()
-
     # Определяем, кажется ли сессия уже в транзакции (без побочных эффектов).
     try:
         session_in_transaction = bool(
@@ -732,28 +785,25 @@ def update_test_case_from_payload(
     """
     # Небольшая валидация аргумента
     if not isinstance(test_case_id, int) or test_case_id <= 0:
+        logger.warning(
+            "Ошибка валидации: некорректный test_case_id %r в update_test_case_from_payload",
+            test_case_id,
+        )
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
     normalized = _validate_basic_fields(payload)
-    logger = __import__("logger").init_logger()
-
     try:
         # Контекст-менеджер гарантирует commit/rollback. Входим в транзакцию прежде, чем делать SELECT/UPDATE/INSERT
         with _transaction_context():
-            # Получаем текущий объект внутри транзакции (важное изменение)
-            tc = models.TestCase.query.options(
-                joinedload(models.TestCase.steps),
-                joinedload(models.TestCase.tags),
-                joinedload(models.TestCase.suite_links).joinedload(
-                    models.TestCaseSuite.suite
-                ),
-            ).get(test_case_id)
-
-            if not tc or tc.is_deleted:
+            tc = _load_test_case(test_case_id, include_deleted=False)
+            if not tc:
                 raise NotFoundError(f"TestCase with id={test_case_id} not found")
 
             # сохраняем старые suite_ids до удаления связей
             old_suite_ids = {link.suite_id for link in getattr(tc, "suite_links", [])}
+
+            # сохраняем старые tag_ids до обновления тегов
+            old_tag_ids = {tag.id for tag in getattr(tc, "tags", [])}
 
             # -----------------------
             # Обновляем теги (replace)
@@ -801,6 +851,10 @@ def update_test_case_from_payload(
                     else auto_position
                 )
                 if position in positions_seen:
+                    logger.warning(
+                        "Ошибка валидации: дубликат позиции шага %s при обновлении",
+                        position,
+                    )
                     raise ValidationError(f"Duplicate step position: {position}")
                 positions_seen.add(position)
                 auto_position = max(auto_position, position + 1)
@@ -837,6 +891,7 @@ def update_test_case_from_payload(
                     suite=suite_obj, position=norm_suite_link.get("position")
                 )
                 tc.suite_links.append(link)
+
             # -----------------------
             # Обрабатываем изменения флагов is_deleted у affected suites
             # -----------------------
@@ -871,6 +926,29 @@ def update_test_case_from_payload(
                         suite_obj.is_deleted = True
                         db.session.add(suite_obj)
 
+            # -----------------------
+            # Обрабатываем изменения тегов: soft delete для удалённых из этого кейса
+            # -----------------------
+            new_tag_ids = tag_ids_seen
+            removed_tag_ids = old_tag_ids - new_tag_ids
+
+            # Для удалённых тегов: если они больше не связаны ни с одним активным кейсом — пометить is_deleted=True
+            for tag_id in removed_tag_ids:
+                active_tag_count = (
+                    db.session.query(func.count(models.TestCase.id))
+                    .join(models.TestCase.tags)
+                    .filter(
+                        models.Tag.id == tag_id,
+                        models.TestCase.is_deleted.is_(False),
+                    )
+                    .scalar()
+                )
+                if not active_tag_count:
+                    tag_obj = models.Tag.query.get(tag_id)
+                    if tag_obj and not tag_obj.is_deleted:
+                        tag_obj.is_deleted = True
+                        db.session.add(tag_obj)
+
             now = datetime.now(timezone.utc)
 
             # Обновляем простые поля
@@ -894,6 +972,7 @@ def update_test_case_from_payload(
         ) from ie
 
 
+# --------- DELETE TestCase logic ---------
 def soft_delete_test_case(test_case_id: int) -> models.TestCase:
     """
     Soft-delete TestCase: пометить запись как удалённую, не удаляя дочерние записи
@@ -904,24 +983,19 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
       - Если тест-кейс не найден -> NotFoundError.
       - Идемпотентно: если уже is_deleted -> возвращаем объект.
       - В транзакции: помечаем tc.is_deleted=True, tc.deleted_at и tc.updated_at.
+      - Добавляем суффикс _deleted_{id} к имени для обхода UniqueConstraint (name, is_deleted).
       - Flush + refresh и возвращаем tc.
     """
     if not isinstance(test_case_id, int) or test_case_id <= 0:
+        logger.warning(
+            "Ошибка валидации: некорректный test_case_id %r в soft_delete_test_case",
+            test_case_id,
+        )
         raise ValidationError("test_case_id должен быть положительным целым числом")
-
-    logger = __import__("logger").init_logger()
 
     try:
         with _transaction_context():
-            # Загружаем объект внутри транзакции
-            tc = models.TestCase.query.options(
-                joinedload(models.TestCase.steps),
-                joinedload(models.TestCase.tags),
-                joinedload(models.TestCase.suite_links).joinedload(
-                    models.TestCaseSuite.suite
-                ),
-            ).get(test_case_id)
-
+            tc = _load_test_case(test_case_id, include_deleted=True)
             if not tc:
                 raise NotFoundError(f"TestCase with id={test_case_id} not found")
 
@@ -931,7 +1005,9 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
 
             now = datetime.now(timezone.utc)
 
-            # Просто помечаем тест-кейс как удалённый
+            # Добавляем уникальный суффикс к имени для обхода UniqueConstraint (name, is_deleted).
+            # Это позволяет иметь несколько удалённых кейсов с изначально одинаковым именем.
+            tc.name = f"{tc.name}_deleted_{tc.id}"
             tc.is_deleted = True
             tc.deleted_at = now
             tc.updated_at = now
@@ -980,6 +1056,26 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
                         suite.is_deleted = True
                         db.session.add(suite)
 
+            # Проверяем теги: если тег больше не связан ни с одним активным тест-кейсом,
+            # помечаем его как удалённый
+            tag_ids = {tag.id for tag in getattr(tc, "tags", [])}
+            for tag_id in tag_ids:
+                # count активных (is_deleted == False) кейсов с этим тегом
+                active_tag_count = (
+                    db.session.query(func.count(models.TestCase.id))
+                    .join(models.TestCase.tags)
+                    .filter(
+                        models.Tag.id == tag_id,
+                        models.TestCase.is_deleted.is_(False),
+                    )
+                    .scalar()
+                )
+                if not active_tag_count or int(active_tag_count) == 0:
+                    tag = models.Tag.query.get(tag_id)
+                    if tag and not tag.is_deleted:
+                        tag.is_deleted = True
+                        db.session.add(tag)
+
             # гарантируем, что объекты обновлены в сессии
             db.session.flush()
             db.session.refresh(tc)
@@ -990,3 +1086,66 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
         raise ConflictError("Ошибка целостности бд при удалении TestCase") from ie
 
     return tc
+
+
+def parse_test_case_payload_from_form() -> Optional[dict]:
+    """
+    Fallback-парсер для form-data (urlencoded/multipart) при отсутствии JSON.
+    Поддерживает простые поля, теги (через запятую), suite_links (через запятую),
+    шаги вида steps[0][action]/[expected]/[position].
+    """
+    form = flask.request.form or {}
+    payload = {}
+
+    for f in ("name", "preconditions", "description", "expected_result"):
+        if f in form:
+            payload[f] = form.get(f)
+
+    tags_raw = form.get("tags")
+    if tags_raw is not None:
+        payload["tags"] = [t.strip() for t in tags_raw.split(",") if t.strip()]
+
+    suites_raw = form.get("suite_links") or form.get("suites")
+    if suites_raw:
+        suites = [s.strip() for s in suites_raw.split(",") if s.strip()]
+        payload["suite_links"] = [{"suite_name": s} for s in suites]
+
+    steps_regex = re.compile(r"^steps\[(\d+)\]\[(action|expected|position)\]$")
+    steps_map = {}
+    for key, val in form.items():
+        m = steps_regex.match(key)
+        if not m:
+            continue
+        idx = int(m.group(1))
+        field = m.group(2)
+        steps_map.setdefault(idx, {})
+        if field == "position":
+            try:
+                steps_map[idx][field] = int(val)
+            except Exception:
+                steps_map[idx][field] = None
+        else:
+            steps_map[idx][field] = val
+
+    if steps_map:
+        steps_list = []
+        for i in sorted(steps_map.keys()):
+            s = steps_map[i]
+            steps_list.append(
+                {
+                    "position": s.get("position"),
+                    "action": s.get("action", "") or "",
+                    "expected": s.get("expected", "") or "",
+                }
+            )
+        payload["steps"] = steps_list
+
+    return payload if payload else None
+
+
+def get_test_case_payload() -> Optional[dict]:
+    """Унифицированный источник payload: JSON или form."""
+    payload = flask.request.get_json(silent=True)
+    if payload:
+        return payload
+    return parse_test_case_payload_from_form()

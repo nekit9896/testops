@@ -253,12 +253,15 @@ class Tag(db.Model):
     __tablename__ = "tags"
     id = sqlalchemy.Column(sqlalchemy.Integer, primary_key=True, autoincrement=True)
     name = sqlalchemy.Column(sqlalchemy.String(100), nullable=False, unique=True)
+    is_deleted = sqlalchemy.Column(sqlalchemy.Boolean, default=False, nullable=False)
     test_cases = relationship(
         "TestCase",
         secondary=test_case_tags,
         back_populates="tags",
         passive_deletes=True,
     )
+
+    __table_args__ = (sqlalchemy.Index("ix_tags_is_deleted", "is_deleted"),)
 
     def __repr__(self):
         return f"<Tag {self.name}>"
