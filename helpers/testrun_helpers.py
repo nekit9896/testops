@@ -629,7 +629,7 @@ def fetch_reports(
     start_date_from/start_date_to — фильтр по дате старта (формат YYYY-MM-DD).
     """
     if direction not in {"next", "prev"}:
-        logger.error(f"Получение некорректное направление пагинации: {direction}")
+        logger.error(f"Получено некорректное направление пагинации: {direction}")
         raise ValueError("Направление должно быть либо 'next' или 'prev'")
 
     # Парсим даты

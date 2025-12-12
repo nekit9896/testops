@@ -51,6 +51,7 @@ class ReportsPage {
     this.datePanel = document.getElementById("date-filter-panel");
 
     this.filterControls = this.initFilterControls();
+    this.dateCounter = document.getElementById("date-filter-counter");
     this.handleDocumentClick = this.handleDocumentClick.bind(this);
 
     this.bindEvents();
@@ -198,7 +199,9 @@ class ReportsPage {
 
     this.dateFilters.from = fromValue || null;
     this.dateFilters.to = toValue || null;
+    this.closeDatePanel();
     this.loadPage();
+    this.updateDateCounter();
   }
 
   /**
@@ -218,7 +221,11 @@ class ReportsPage {
     this.dateFilters.to = null;
 
     if (hadDateFilter) {
+      this.closeDatePanel();
       this.loadPage();
+      this.updateDateCounter();
+    } else {
+      this.closeDatePanel();
     }
   }
 
@@ -273,6 +280,18 @@ class ReportsPage {
   closeDatePanel() {
     if (this.datePanel) {
       this.datePanel.classList.add("hidden");
+    }
+  }
+
+  updateDateCounter() {
+    if (!this.dateCounter) return;
+    const hasFilter = Boolean(this.dateFilters.from || this.dateFilters.to);
+    if (hasFilter) {
+      this.dateCounter.textContent = "●";
+      this.dateCounter.classList.remove("hidden");
+    } else {
+      this.dateCounter.textContent = "";
+      this.dateCounter.classList.add("hidden");
     }
   }
 
@@ -531,8 +550,10 @@ class ReportsPage {
             : "text-gray-800";
 
         const runName = this.escapeHtml(item.run_name || "-");
-        const startDate = this.escapeHtml(this.formatLocalDate(item.start_date));
-        const endDate = this.escapeHtml(this.formatLocalDate(item.end_date));
+        const startDateRaw = this.formatLocalDate(item.start_date);
+        const endDateRaw = this.formatLocalDate(item.end_date);
+        const startDate = this.escapeHtml(startDateRaw);
+        const endDate = this.escapeHtml(endDateRaw);
         const stand = this.escapeHtml(item.stand || "-");
         const status = this.escapeHtml(item.status || "-");
 

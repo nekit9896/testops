@@ -32,11 +32,13 @@
         <tr>
           <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">ID</th>
           <th class="px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">Название</th>
-          <th class="relative px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider">
+          <th class="relative px-4 py-2 text-left text-xs font-semibold text-gray-600 uppercase tracking-wider" data-filter-key="date">
             <button type="button"
                     id="date-filter-trigger"
                     class="flex items-center gap-1 text-left text-xs font-semibold uppercase tracking-wider text-gray-600 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded">
               <span>Старт</span>
+              <span id="date-filter-counter"
+                    class="hidden rounded-full bg-blue-100 px-1.5 text-[10px] font-semibold text-blue-700"></span>
               <svg class="h-3 w-3 text-gray-500" viewBox="0 0 12 12" fill="none" aria-hidden="true">
                 <path d="M3 4.5l3 3 3-3" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"
                       stroke-linejoin="round"/>
