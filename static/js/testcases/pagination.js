@@ -7,6 +7,7 @@
 
   const { toast } = window.TestOps;
 
+  // Настраивает кнопки пагинации "Load more" для таблицы кейсов
   function setupLoadMorePagination() {
     const nextLink = document.getElementById("next-link");
     const prevLink = document.getElementById("prev-link");

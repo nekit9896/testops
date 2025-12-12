@@ -20,6 +20,7 @@
     `;
   }
 
+  // Управляет загрузкой/переключением деталей тест-кейса через partial HTML
   function setupTestcaseDetailLoader() {
     const tbody = document.getElementById("cases-tbody");
     const detailPanel = document.getElementById("testcase-detail-panel");

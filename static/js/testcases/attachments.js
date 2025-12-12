@@ -7,6 +7,7 @@
 
   const { toast, api } = window.TestOps;
 
+  // Вешает обработчики удаления вложений из карточки тест-кейса
   function setupAttachmentActions() {
     document.querySelectorAll("[data-delete-attachment]").forEach((btn) => {
       btn.addEventListener("click", async () => {
@@ -29,6 +30,7 @@
     });
   }
 
+  // Настраивает загрузку файла через скрытый input и кнопку "Прикрепить"
   function setupFileUpload() {
     const attachBtn = document.getElementById("btn-attach-file");
     const fileInput = document.getElementById("hidden-file-input");

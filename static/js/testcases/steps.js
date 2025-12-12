@@ -7,6 +7,7 @@
 
   const { autoResizeTextarea } = window.TestOps.utils;
 
+  // Собирает значения шагов из DOM в массив объектов для API
   function serializeSteps(container) {
     if (!container) return [];
     const rows = Array.from(container.querySelectorAll("[data-step-row]"));
@@ -24,6 +25,7 @@
       .filter(Boolean);
   }
 
+  // Перенумеровывает шаги и обновляет data-индексы
   function reindexSteps(container) {
     if (!container) return;
     Array.from(container.querySelectorAll("[data-step-row]")).forEach((row, idx) => {
@@ -37,12 +39,14 @@
     });
   }
 
+  // Прячет/показывает кнопку добавления шага если список пуст
   function toggleAddButton(container, addButton) {
     if (!addButton || !container) return;
     const hasSteps = container.querySelectorAll("[data-step-row]").length > 0;
     addButton.classList.toggle("hidden", hasSteps);
   }
 
+  // Создаёт DOM-узел шага с заданными значениями
   function createStepNode(idx, action = "", expected = "") {
     const div = document.createElement("div");
     div.className = "py-1";
@@ -64,6 +68,7 @@
     return div;
   }
 
+  // Добавляет новый шаг в конец списка
   function addStep(container) {
     if (!container) return;
     const idx = container.querySelectorAll("[data-step-row]").length;
@@ -72,6 +77,7 @@
     reindexSteps(container);
   }
 
+  // Вешает обработчики вставки/удаления шагов и готовит контейнер
   function setupStepsContainer(container, addButton) {
     if (!container) return;
     if (addButton) {

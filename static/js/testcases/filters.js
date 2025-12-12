@@ -7,6 +7,7 @@
 
   const { utils } = window.TestOps;
 
+  // Инициализирует дропдаун тегов и применяет фильтрацию без полной перезагрузки
   function setupTagDropdown() {
     const root = document.getElementById("tags-filter-root");
     const pageRoot = document.getElementById("testcases-root");
@@ -34,10 +35,12 @@
     const initialSelectedArr = utils.splitCsv(initialCsv);
     let selected = new Set(initialSelectedArr);
 
+    // Обновляет текстовое представление выбранных тегов
     function updateSummary() {
       summary.textContent = "Теги";
     }
 
+    // Рисует список тегов с учётом поискового фильтра
     function renderList(filterText = "") {
       listEl.innerHTML = "";
       const lower = (filterText || "").toLowerCase();
@@ -82,6 +85,7 @@
       renderList(this.value || "");
     });
 
+    // Применяет выбранные теги и загружает обновлённый список кейсов
     async function applyAndNavigate() {
       const arr = Array.from(selected);
       hidden.value = arr.join(",");
@@ -194,6 +198,7 @@
     renderList("");
   }
 
+  // Автосабмит простых фильтров по change
   function setupAutoSubmitFilters() {
     document.querySelectorAll("[data-auto-submit-filter]").forEach((el) => {
       el.addEventListener("change", () => {

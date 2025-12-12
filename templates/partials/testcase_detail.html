@@ -8,7 +8,7 @@
 #}
 
 {% if create %}
-  <!-- CREATE form -->
+  <!-- Форма создания тест-кейса (partial) -->
   {% with messages = get_flashed_messages(with_categories=true) %}
     {% if messages %}
       <div class="mb-4">
@@ -67,7 +67,7 @@
   </form>
 
 {% elif selected_case %}
-  <!-- EDIT / VIEW -->
+  <!-- Форма просмотра/редактирования выбранного тест-кейса -->
 
   <form id="edit-case-form"
         data-testcase-id="{{ selected_case.id }}"

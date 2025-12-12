@@ -6,6 +6,7 @@
   'use strict';
 
   const api = {
+    // Выполняет HTTP запрос с JSON-ориентированными заголовками и проверкой ответа
     async request(url, { method = "GET", body, headers = {} } = {}) {
       const opts = {
         method,

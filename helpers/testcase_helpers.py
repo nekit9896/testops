@@ -61,7 +61,7 @@ def _ensure_list(value: Optional[Iterable]) -> List:
     return list(value) if value is not None else []
 
 
-def _joinedload_case_relations():
+def _joinedload_case_relations() -> Tuple[Any, ...]:
     """Сбор общих joinedload-опций для TestCase."""
     return (
         joinedload(models.TestCase.tags),
@@ -90,6 +90,9 @@ def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
     """
     name = payload.get("name")
     if not name or not isinstance(name, str) or not name.strip():
+        logger.warning(
+            "ValidationError: Поле 'name' обязательно и не должно быть пустой строкой"
+        )
         raise ValidationError("Поле 'name' обязательно и не должно быть пустой строкой")
 
     normalized = {
@@ -105,10 +108,22 @@ def _validate_basic_fields(payload: Dict[str, Any]) -> Dict[str, Any]:
 
     # Простые валидации типов
     if not isinstance(normalized["steps"], list):
+        logger.warning(
+            "Ошибка валидации: 'steps' не список (type=%s)",
+            type(normalized["steps"]).__name__,
+        )
         raise ValidationError("Поле 'steps' должно быть списком")
     if not isinstance(normalized["tags"], list):
+        logger.warning(
+            "Ошибка валидации: 'tags' не список (type=%s)",
+            type(normalized["tags"]).__name__,
+        )
         raise ValidationError("Поле 'tags' должно быть списком")
     if not isinstance(normalized["suite_links"], list):
+        logger.warning(
+            "Ошибка валидации: 'suite_links' не список (type=%s)",
+            type(normalized["suite_links"]).__name__,
+        )
         raise ValidationError("Поле 'suite_links' должно быть списком")
 
     return normalized
@@ -144,6 +159,7 @@ def _normalize_tag_input(raw: Union[str, Dict[str, Any]]) -> Dict[str, Any]:
                 else {"skip": True}
             )
     # Неправильный формат
+    logger.warning("Ошибка валидации: некорректный формат тега %r", raw)
     raise ValidationError(
         "Каждый тег должен быть строкой (именем) или объектом, содержащим 'id' или 'name'"
     )
@@ -200,6 +216,9 @@ def _get_or_create_tag(normalized: Dict[str, Any]) -> Optional[models.Tag]:
             raise
         return tag
 
+    logger.warning(
+        "Ошибка валидации: нормализованный тег без id и name: %r", normalized
+    )
     raise ValidationError("Введенный тег не прошел валидацию")
 
 
@@ -211,6 +230,10 @@ def _normalize_suite_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     Убеждаемся, что на вход — объект и извлекаем ожидаемые поля: suite_id / suite_name / position.
     """
     if not isinstance(raw, dict):
+        logger.warning(
+            "Ошибка валидации: suite_link не словарь (type=%s)",
+            type(raw).__name__,
+        )
         raise ValidationError("Каждая suite_link должна быть объектом")
 
     out: Dict[str, Any] = {}
@@ -222,6 +245,10 @@ def _normalize_suite_input(raw: Dict[str, Any]) -> Dict[str, Any]:
         try:
             out["position"] = int(raw["position"])
         except Exception:
+            logger.warning(
+                "Ошибка валидации: suite_link.position не int (value=%r)",
+                raw.get("position"),
+            )
             raise ValidationError("'position' в suite_links должно быть целым числом")
     return out
 
@@ -271,6 +298,9 @@ def _get_or_create_suite(normalized: Dict[str, Any]) -> Optional[models.TestSuit
             raise
         return suite
 
+    logger.warning(
+        "Ошибка валидации: suite_link без suite_id и suite_name: %r", normalized
+    )
     raise ValidationError(
         "Каждый suite_link должен содержать 'suite_id' или 'suite_name'"
     )
@@ -285,9 +315,15 @@ def _normalize_step_input(raw: Dict[str, Any]) -> Dict[str, Any]:
     Позиция может быть опущена — тогда будет назначена автоматически позже.
     """
     if not isinstance(raw, dict):
+        logger.warning(
+            "Ошибка валидации: step не словарь (type=%s)", type(raw).__name__
+        )
         raise ValidationError("Каждый step должен быть словарем")
     action = raw.get("action")
     if not action or not isinstance(action, str) or not action.strip():
+        logger.warning(
+            "Ошибка валидации: action шага пустой/некорректный (value=%r)", action
+        )
         raise ValidationError("Каждый step должен содержать не пустой 'action'")
     out = {
         "action": action.strip(),
@@ -356,6 +392,10 @@ def create_test_case_from_payload(payload: Dict[str, Any]) -> models.TestCase:
                     else auto_position
                 )
                 if position_step_input in positions_seen:
+                    logger.warning(
+                        "Ошибка валидации: дубликат позиции шага %s при создании",
+                        position_step_input,
+                    )
                     raise ValidationError(
                         f"Дубликат позиции шага: {position_step_input}"
                     )
@@ -656,6 +696,10 @@ def get_test_case_by_id(
     """
     # Валидация аргумента
     if not isinstance(test_case_id, int) or test_case_id <= 0:
+        logger.warning(
+            "Ошибка валидации: некорректный test_case_id %r в get_test_case_by_id",
+            test_case_id,
+        )
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
     test_case = _load_test_case(test_case_id, include_deleted=include_deleted)
@@ -741,6 +785,10 @@ def update_test_case_from_payload(
     """
     # Небольшая валидация аргумента
     if not isinstance(test_case_id, int) or test_case_id <= 0:
+        logger.warning(
+            "Ошибка валидации: некорректный test_case_id %r в update_test_case_from_payload",
+            test_case_id,
+        )
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
     normalized = _validate_basic_fields(payload)
@@ -803,6 +851,10 @@ def update_test_case_from_payload(
                     else auto_position
                 )
                 if position in positions_seen:
+                    logger.warning(
+                        "Ошибка валидации: дубликат позиции шага %s при обновлении",
+                        position,
+                    )
                     raise ValidationError(f"Duplicate step position: {position}")
                 positions_seen.add(position)
                 auto_position = max(auto_position, position + 1)
@@ -935,6 +987,10 @@ def soft_delete_test_case(test_case_id: int) -> models.TestCase:
       - Flush + refresh и возвращаем tc.
     """
     if not isinstance(test_case_id, int) or test_case_id <= 0:
+        logger.warning(
+            "Ошибка валидации: некорректный test_case_id %r в soft_delete_test_case",
+            test_case_id,
+        )
         raise ValidationError("test_case_id должен быть положительным целым числом")
 
     try:

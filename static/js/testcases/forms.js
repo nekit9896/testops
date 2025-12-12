@@ -7,6 +7,7 @@
 
   const { toast, api, utils, steps } = window.TestOps;
 
+  // Инициализирует форму создания тест-кейса (валидация, отправка, шаги)
   function setupCreateForm() {
     const form = document.getElementById("create-case-form");
     if (!form) return;
@@ -77,6 +78,7 @@
     });
   }
 
+  // Инициализирует форму редактирования тест-кейса (валидация, отправка, удаление)
   function setupEditForm() {
     const form = document.getElementById("edit-case-form");
     if (!form) return;

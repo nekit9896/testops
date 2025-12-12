@@ -5,7 +5,7 @@
 (function() {
   'use strict';
 
-  // Парсинг ошибки
+  // Парсит строку/JSON ошибки и извлекает человекочитаемое сообщение
   function parseErrorMessage(message) {
     if (!message) return "Неизвестная ошибка";
     
@@ -34,6 +34,7 @@
   const toast = {
     container: null,
     
+    // Подготавливает контейнер для тостов (однократно)
     init() {
       if (this.container) return;
       this.container = document.createElement("div");
@@ -42,6 +43,7 @@
       document.body.appendChild(this.container);
     },
     
+    // Показывает тост указанного типа с авто-скрытием
     show(message, type = "error", duration = 10000) {
       this.init();
       const toastEl = document.createElement("div");
@@ -61,6 +63,7 @@
       }
     },
     
+    // Шорткаты для разных типов уведомлений
     error(message) { this.show(message, "error"); },
     success(message) { this.show(message, "success"); },
     info(message) { this.show(message, "info"); }

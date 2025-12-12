@@ -5,7 +5,7 @@
 (function() {
   'use strict';
 
-  // Автоматическое изменение размера textarea
+  // Автоматически подгоняет высоту textarea в заданных границах
   function autoResizeTextarea(textarea, maxRows = 15, minRows = 1) {
     if (!textarea) return;
     
@@ -43,7 +43,7 @@
     });
   }
 
-  // Валидация полей
+  // Проверяет, что поле не пустое, и подсвечивает/показывает ошибку
   function validateField(input, errorMessage) {
     const value = input?.value?.trim() || "";
     if (!value) {
@@ -56,13 +56,14 @@
     return true;
   }
 
+  // Убирает визуальное выделение ошибки с поля
   function clearFieldError(input) {
     if (input) {
       input.classList.remove("border-red-500", "bg-red-50");
     }
   }
 
-  // Утилиты для работы со строками
+  // Разбивает в массив строк без пустых значений
   function splitCsv(value = "") {
     return String(value)
       .split(",")
@@ -70,15 +71,17 @@
       .filter(Boolean);
   }
 
+  // Превращает строку с названиями сьютов в объекты для API
   function collectSuiteLinks(csv) {
     return splitCsv(csv).map((name) => ({ suite_name: name }));
   }
 
+  // Превращает строку тегов в массив тегов
   function collectTags(csv) {
     return splitCsv(csv);
   }
 
-  // Построение URL с сохранением фильтров
+  // Собирает URL текущей страницы с обновлёнными query-параметрами
   function buildUrlWithFilters(params = {}) {
     const currentParams = new URLSearchParams(window.location.search);
     
@@ -99,7 +102,7 @@
     return window.location.pathname + "?" + currentParams.toString();
   }
 
-  // Построение URL для partial endpoint
+  // Строит URL для partial-эндпойнта содержания тест-кейса
   function buildPartialUrl(testcaseId, createMode = false) {
     const params = new URLSearchParams();
     const currentParams = new URLSearchParams(window.location.search);

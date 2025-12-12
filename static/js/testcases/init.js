@@ -7,6 +7,7 @@
 
   const { filters, forms, attachments, detail, pagination } = window.TestOps;
 
+  // Запускает все модули страницы тест-кейсов после загрузки DOM
   function init() {
     // Фильтры и теги
     filters.setupTagDropdown();
