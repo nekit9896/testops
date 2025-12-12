@@ -9,22 +9,32 @@ class ReportsPage {
     // REST endpoint и лимит записей берутся из data-атрибутов шаблона
     this.dataUrl = dataUrl;
     this.limit = limit;
+    // Состояние курсоров для пагинации
     this.state = {
       nextCursor: null,
       prevCursor: null,
     };
 
+    // Конфигурация фильтров: какое имя параметра в query и какой ключ в ответе содержит значения.
     this.filterConfig = {
       stand: { param: "stand", responseKey: "stands" },
       status: { param: "status", responseKey: "statuses" },
     };
+    // Выбранные пользователем значения фильтров
     this.filters = {
       stand: [],
       status: [],
     };
+    // Доступные значения фильтров, приходящие с сервера
     this.availableFilters = {
       stand: [],
       status: [],
+    };
+
+    // Фильтры по дате
+    this.dateFilters = {
+      from: null,
+      to: null,
     };
 
     this.tableBody = document.getElementById("reports-body");
@@ -33,15 +43,39 @@ class ReportsPage {
     this.prevButton = document.getElementById("reports-prev");
     this.nextButton = document.getElementById("reports-next");
     this.tableWrapper = document.querySelector("[data-reports-table-wrapper]");
+    // Кэш исходной высоты таблицы (чтобы таблица не прыгала при коротких страницах)
     this.defaultTableHeight = null;
 
+    // Элементы фильтра по дате
+    this.dateFromInput = document.getElementById("date-from");
+    this.dateToInput = document.getElementById("date-to");
+    this.dateApplyButton = document.getElementById("date-filter-apply");
+    this.dateResetButton = document.getElementById("date-filter-reset");
+    this.dateError = document.getElementById("date-error");
+    this.dateTrigger = document.getElementById("date-filter-trigger");
+    this.datePanel = document.getElementById("date-filter-panel");
+
     this.filterControls = this.initFilterControls();
+    this.dateCounter = document.getElementById("date-filter-counter");
     this.handleDocumentClick = this.handleDocumentClick.bind(this);
 
     this.bindEvents();
+    // Загружаем первую страницу (последние записи)
     this.loadPage();
   }
 
+  /**
+   * Находит и собирает контролы управления фильтрами из DOM.
+   *
+   * Возвращает объект вида:
+   * {
+   *   <key>: {
+   *     container, toggle, panel, options, apply, counter, reset
+   *   }
+   * }
+   *
+   * @returns {Object<string, Object>} controls - Собранные узлы управления фильтрами.
+   */
   initFilterControls() {
     const controls = {};
 
@@ -61,6 +95,7 @@ class ReportsPage {
         reset: node.querySelector("[data-filter-reset]"),
       };
 
+      // Отменяем всплытие внутри панели, чтобы клик по ней не закрывал панель
       if (controls[key].panel) {
         controls[key].panel.addEventListener("click", (event) => {
           event.stopPropagation();
@@ -71,6 +106,14 @@ class ReportsPage {
     return controls;
   }
 
+  /**
+   * Привязывает обработчики событий к элементам страницы:
+   *  - кнопки пагинации
+   *  - кнопки управления фильтрами
+   *  - глобальный клик для закрытия панелей фильтров
+   *
+   * @returns {void}
+   */
   bindEvents() {
     // "▲" — листаем к более новым записям
     if (this.prevButton) {
@@ -116,10 +159,128 @@ class ReportsPage {
       }
     });
 
+    // Закрываем открытые панели при клике вне панелей
     document.addEventListener("click", this.handleDocumentClick);
+
+    // Обработчики для фильтров по дате
+    if (this.dateTrigger && this.datePanel) {
+      this.dateTrigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.toggleDatePanel();
+      });
+      // Авто-подстановка сегодняшней даты в "С" при первом открытии
+      this.dateTrigger.addEventListener("click", () => {
+        if (this.dateFromInput && !this.dateFromInput.value) {
+          const today = new Date();
+          const yyyy = today.getFullYear();
+          const mm = String(today.getMonth() + 1).padStart(2, "0");
+          const dd = String(today.getDate()).padStart(2, "0");
+          this.dateFromInput.value = `${yyyy}-${mm}-${dd}`;
+        }
+      });
+    }
+
+    if (this.dateApplyButton) {
+      this.dateApplyButton.addEventListener("click", () => {
+        this.handleDateFilterApply();
+      });
+    }
+
+    if (this.dateResetButton) {
+      this.dateResetButton.addEventListener("click", () => {
+        this.handleDateFilterReset();
+      });
+    }
+
+    // При нажатии Enter в полях даты — применить фильтр
+    if (this.dateFromInput) {
+      this.dateFromInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          this.handleDateFilterApply();
+        }
+      });
+    }
+    if (this.dateToInput) {
+      this.dateToInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          this.handleDateFilterApply();
+        }
+      });
+    }
+  }
+
+  /**
+   * Валидирует и применяет фильтр по дате.
+   */
+  handleDateFilterApply() {
+    const fromValue = this.dateFromInput ? this.dateFromInput.value : null;
+    const toValue = this.dateToInput ? this.dateToInput.value : null;
+
+    // Скрываем предыдущую ошибку
+    this.showDateError("");
+
+    // Валидация: дата "с" должна быть <= дате "до"
+    if (fromValue && toValue && fromValue > toValue) {
+      this.showDateError("Дата 'С' должна быть меньше или равна дате 'По'");
+      return;
+    }
+
+    this.dateFilters.from = fromValue || null;
+    this.dateFilters.to = toValue || null;
+    this.closeDatePanel();
+    this.loadPage();
+    this.updateDateCounter();
+  }
+
+  /**
+   * Сбрасывает фильтр по дате.
+   */
+  handleDateFilterReset() {
+    if (this.dateFromInput) {
+      this.dateFromInput.value = "";
+    }
+    if (this.dateToInput) {
+      this.dateToInput.value = "";
+    }
+    this.showDateError("");
+
+    const hadDateFilter = this.dateFilters.from || this.dateFilters.to;
+    this.dateFilters.from = null;
+    this.dateFilters.to = null;
+
+    if (hadDateFilter) {
+      this.closeDatePanel();
+      this.loadPage();
+      this.updateDateCounter();
+    } else {
+      this.closeDatePanel();
+    }
+  }
+
+  /**
+   * Показывает/скрывает сообщение об ошибке даты.
+   */
+  showDateError(text) {
+    if (!this.dateError) {
+      return;
+    }
+    if (!text) {
+      this.dateError.classList.add("hidden");
+      this.dateError.textContent = "";
+      return;
+    }
+    this.dateError.textContent = text;
+    this.dateError.classList.remove("hidden");
   }
 
   handleDocumentClick(event) {
+    // Закрыть панель дат, если клик вне
+    if (this.datePanel && this.dateTrigger) {
+      if (!this.datePanel.contains(event.target) && !this.dateTrigger.contains(event.target)) {
+        this.closeDatePanel();
+      }
+    }
+
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
       if (!control || !control.container) {
@@ -132,6 +293,42 @@ class ReportsPage {
     });
   }
 
+  toggleDatePanel() {
+    if (!this.datePanel) return;
+    const isOpen = !this.datePanel.classList.contains("hidden");
+    if (isOpen) {
+      this.closeDatePanel();
+    } else {
+      // закрываем остальные фильтры
+      Object.keys(this.filterControls).forEach((key) => this.closeFilterPanel(key));
+      this.datePanel.classList.remove("hidden");
+    }
+  }
+
+  closeDatePanel() {
+    if (this.datePanel) {
+      this.datePanel.classList.add("hidden");
+    }
+  }
+
+  updateDateCounter() {
+    if (!this.dateCounter) return;
+    const hasFilter = Boolean(this.dateFilters.from || this.dateFilters.to);
+    if (hasFilter) {
+      this.dateCounter.textContent = "●";
+      this.dateCounter.classList.remove("hidden");
+    } else {
+      this.dateCounter.textContent = "";
+      this.dateCounter.classList.add("hidden");
+    }
+  }
+
+  /**
+   * Переключает видимость панели фильтра (открыть/закрыть).
+   *
+   * @param {string} key - Ключ фильтра (например, "stand", "status").
+   * @returns {void}
+   */
   toggleFilterPanel(key) {
     const control = this.filterControls[key];
     if (!control || !control.panel) {
@@ -139,6 +336,7 @@ class ReportsPage {
     }
 
     const isOpen = !control.panel.classList.contains("hidden");
+    // Закрываем другие панели
     Object.keys(this.filterControls).forEach((filterKey) => {
       if (filterKey !== key) {
         this.closeFilterPanel(filterKey);
@@ -152,6 +350,12 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Закрывает панель конкретного фильтра.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   closeFilterPanel(key) {
     const control = this.filterControls[key];
     if (control && control.panel) {
@@ -159,6 +363,16 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Применение фильтра — собирает выбранные значения чекбоксов и обновляет состояние фильтров.
+   * После применения:
+   *  - обновляются счётчики
+   *  - закрывается панель
+   *  - перезагружается страница с сервера
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   handleFilterApply(key) {
     const control = this.filterControls[key];
     if (!control || !control.options) {
@@ -177,6 +391,12 @@ class ReportsPage {
     this.loadPage();
   }
 
+  /**
+   * Сбрасывает фильтр: снимает все чекбоксы, обновляет счётчики и, если был выбор — перезагружает страницу.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   handleFilterReset(key) {
     const control = this.filterControls[key];
     if (!control || !control.options) {
@@ -231,9 +451,35 @@ class ReportsPage {
       });
     });
 
+    // Добавляем параметры фильтрации по дате
+    if (this.dateFilters.from) {
+      params.append("start_date_from", this.dateFilters.from);
+    }
+    if (this.dateFilters.to) {
+      params.append("start_date_to", this.dateFilters.to);
+    }
+
     return params;
   }
 
+  /**
+   * Загружает страницу отчётов с сервера и обновляет представление.
+   *
+   * Ожидает ответ формата:
+   * {
+   *   items: Array<...>,
+   *   next_cursor: string|null,
+   *   prev_cursor: string|null,
+   *   has_next: boolean,
+   *   has_prev: boolean,
+   *   filters: { stands: [...], statuses: [...] }
+   * }
+   *
+   * @param {Object} [options] - Опции загрузки.
+   * @param {string|null} [options.cursor=null] - курсор для пагинации.
+   * @param {string} [options.direction="next"] - направление ("next" | "prev").
+   * @returns {Promise<void>}
+   */
   async loadPage({ cursor = null, direction = "next" } = {}) {
     this.setLoading(true);
     const params = this.buildQueryParams({ cursor, direction });
@@ -289,6 +535,12 @@ class ReportsPage {
     this.renderFilterOptions();
   }
 
+  /**
+   * Рисует опции фильтра в панели (чекбоксы).
+   * Если нет доступных значений — выводит подсказку.
+   *
+   * @returns {void}
+   */
   renderFilterOptions() {
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
@@ -325,6 +577,14 @@ class ReportsPage {
     this.updateFilterCounters();
   }
 
+  /**
+   * Строит безопасный id для инпута фильтра, нормализуя значение.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @param {string} value - Значение опции.
+   * @param {number} index - Индекс в массиве (используется как fallback).
+   * @returns {string} id для input.
+   */
   buildFilterInputId(key, value, index) {
     const normalized = String(value)
       .toLowerCase()
@@ -333,6 +593,11 @@ class ReportsPage {
     return `filter-${key}-${normalized || index}`;
   }
 
+  /**
+   * Обновляет видимые счётчики выбранных значений у каждого фильтра.
+   *
+   * @returns {void}
+   */
   updateFilterCounters() {
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
@@ -346,6 +611,13 @@ class ReportsPage {
     });
   }
 
+  /**
+   * Перерисовывает тело таблицы.
+   * При пустом списке — показывает сообщение.
+   *
+   * @param {Array<Object>} items - Массив элементов отчётов.
+   * @returns {void}
+   */
   renderRows(items = []) {
     if (!this.tableBody) {
       return;
@@ -379,8 +651,10 @@ class ReportsPage {
             : "text-gray-800";
 
         const runName = this.escapeHtml(item.run_name || "-");
-        const startDate = this.escapeHtml(item.start_date || "-");
-        const endDate = this.escapeHtml(item.end_date || "-");
+        const startDateRaw = this.formatLocalDate(item.start_date);
+        const endDateRaw = this.formatLocalDate(item.end_date);
+        const startDate = this.escapeHtml(startDateRaw);
+        const endDate = this.escapeHtml(endDateRaw);
         const stand = this.escapeHtml(item.stand || "-");
         const status = this.escapeHtml(item.status || "-");
 
@@ -407,10 +681,15 @@ class ReportsPage {
     this.adjustTableHeight();
   }
 
+  /**
+   * Проверяет, есть ли активные фильтры.
+   */
   hasActiveFilters() {
-    return Object.keys(this.filters).some(
+    const hasStandardFilters = Object.keys(this.filters).some(
       (key) => (this.filters[key] || []).length > 0
     );
+    const hasDateFilters = this.dateFilters.from || this.dateFilters.to;
+    return hasStandardFilters || hasDateFilters;
   }
 
   /**
@@ -440,6 +719,41 @@ class ReportsPage {
       .replace(/'/g, "&#39;");
   }
 
+  /**
+   * Форматирует ISO дату в локальный часовой пояс пользователя.
+   * @param {string} isoDateString - дата в формате ISO (например "2025-12-11T12:30:00")
+   * @returns {string} отформатированная дата или "-" если входные данные пустые
+   */
+  formatLocalDate(isoDateString) {
+    if (!isoDateString || isoDateString === "-") {
+      return "-";
+    }
+    try {
+      const date = new Date(isoDateString);
+      if (isNaN(date.getTime())) {
+        return isoDateString;
+      }
+      const pad = (n) => String(n).padStart(2, "0");
+      const hh = pad(date.getHours());
+      const mm = pad(date.getMinutes());
+      const ss = pad(date.getSeconds());
+      const dd = pad(date.getDate());
+      const mon = pad(date.getMonth() + 1);
+      const yyyy = date.getFullYear();
+      return `${hh}:${mm}:${ss}, ${dd}.${mon}.${yyyy}`;
+    } catch {
+      return isoDateString;
+    }
+  }
+
+  /**
+   * Подгоняет минимальную высоту таблицы так, чтобы интерфейс не гулял, когда текущая страница содержит мало строк.
+   *
+   * Логика:
+   *  - вычисляем высоту заголовка и примерной строки
+   *  - если defaultTableHeight ещё не установлен — используем fallback: limit * rowHeight
+   *  - минимальная высота = max(defaultTableHeight, header + bodyHeight)
+   */
   adjustTableHeight() {
     if (!this.tableWrapper) {
       return;

@@ -594,21 +594,51 @@ def _has_newer_runs(newest_id: int) -> bool:
     )
 
 
+def _parse_date_param(
+    value: Optional[str], end_of_day: bool = False
+) -> Optional[datetime.datetime]:
+    """
+    Парсит строку даты в формате YYYY-MM-DD в datetime.
+    Если end_of_day=True, устанавливает время 23:59:59, иначе 00:00:00.
+    """
+    if not value:
+        return None
+    try:
+        date = datetime.datetime.strptime(value.strip(), "%Y-%m-%d")
+        if end_of_day:
+            date = date.replace(hour=23, minute=59, second=59)
+        return date
+    except ValueError:
+        logger.warning(f"Некорректный формат даты: {value}")
+        return None
+
+
 def fetch_reports(
     cursor: Optional[int],
     limit: int,
     direction: str = "next",
     statuses: Optional[Sequence[str]] = None,
     stands: Optional[Sequence[str]] = None,
+    start_date_from: Optional[str] = None,
+    start_date_to: Optional[str] = None,
 ) -> Dict[str, Any]:
     """
     Возвращает страницу отчетов с курсорной пагинацией.
     direction: 'next' (старее) или 'prev' (новее).
     statuses/stands — списки значений для фильтрации (множество значений).
+    start_date_from/start_date_to — фильтр по дате старта (формат YYYY-MM-DD).
     """
     if direction not in {"next", "prev"}:
-        logger.error(f"Получение некорректное направление пагинации: {direction}")
+        logger.error(f"Получено некорректное направление пагинации: {direction}")
         raise ValueError("Направление должно быть либо 'next' или 'prev'")
+
+    # Парсим даты
+    date_from = _parse_date_param(start_date_from, end_of_day=False)
+    date_to = _parse_date_param(start_date_to, end_of_day=True)
+
+    # Валидация: дата "с" должна быть меньше или равна дате "до"
+    if date_from and date_to and date_from > date_to:
+        raise ValueError("Дата 'с' должна быть меньше или равна дате 'до'")
 
     available_filters = _get_available_report_filters()
     normalized_statuses = _normalize_filter_values(statuses)
@@ -625,6 +655,12 @@ def fetch_reports(
         base_query = base_query.filter(TestResult.status.in_(normalized_statuses))
     if normalized_stands:
         base_query = base_query.filter(TestResult.stand.in_(normalized_stands))
+
+    # Фильтр по дате старта
+    if date_from:
+        base_query = base_query.filter(TestResult.start_date >= date_from)
+    if date_to:
+        base_query = base_query.filter(TestResult.start_date <= date_to)
 
     order_column = TestResult.id.desc()
     if direction == "prev":
