@@ -9,19 +9,23 @@ class ReportsPage {
     // REST endpoint и лимит записей берутся из data-атрибутов шаблона
     this.dataUrl = dataUrl;
     this.limit = limit;
+    // Состояние курсоров для пагинации
     this.state = {
       nextCursor: null,
       prevCursor: null,
     };
 
+    // Конфигурация фильтров: какое имя параметра в query и какой ключ в ответе содержит значения.
     this.filterConfig = {
       stand: { param: "stand", responseKey: "stands" },
       status: { param: "status", responseKey: "statuses" },
     };
+    // Выбранные пользователем значения фильтров
     this.filters = {
       stand: [],
       status: [],
     };
+    // Доступные значения фильтров, приходящие с сервера
     this.availableFilters = {
       stand: [],
       status: [],
@@ -39,6 +43,7 @@ class ReportsPage {
     this.prevButton = document.getElementById("reports-prev");
     this.nextButton = document.getElementById("reports-next");
     this.tableWrapper = document.querySelector("[data-reports-table-wrapper]");
+    // Кэш исходной высоты таблицы (чтобы таблица не прыгала при коротких страницах)
     this.defaultTableHeight = null;
 
     // Элементы фильтра по дате
@@ -55,9 +60,22 @@ class ReportsPage {
     this.handleDocumentClick = this.handleDocumentClick.bind(this);
 
     this.bindEvents();
+    // Загружаем первую страницу (последние записи)
     this.loadPage();
   }
 
+  /**
+   * Находит и собирает контролы управления фильтрами из DOM.
+   *
+   * Возвращает объект вида:
+   * {
+   *   <key>: {
+   *     container, toggle, panel, options, apply, counter, reset
+   *   }
+   * }
+   *
+   * @returns {Object<string, Object>} controls - Собранные узлы управления фильтрами.
+   */
   initFilterControls() {
     const controls = {};
 
@@ -77,6 +95,7 @@ class ReportsPage {
         reset: node.querySelector("[data-filter-reset]"),
       };
 
+      // Отменяем всплытие внутри панели, чтобы клик по ней не закрывал панель
       if (controls[key].panel) {
         controls[key].panel.addEventListener("click", (event) => {
           event.stopPropagation();
@@ -87,6 +106,14 @@ class ReportsPage {
     return controls;
   }
 
+  /**
+   * Привязывает обработчики событий к элементам страницы:
+   *  - кнопки пагинации
+   *  - кнопки управления фильтрами
+   *  - глобальный клик для закрытия панелей фильтров
+   *
+   * @returns {void}
+   */
   bindEvents() {
     // "▲" — листаем к более новым записям
     if (this.prevButton) {
@@ -132,6 +159,7 @@ class ReportsPage {
       }
     });
 
+    // Закрываем открытые панели при клике вне панелей
     document.addEventListener("click", this.handleDocumentClick);
 
     // Обработчики для фильтров по дате
@@ -295,6 +323,12 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Переключает видимость панели фильтра (открыть/закрыть).
+   *
+   * @param {string} key - Ключ фильтра (например, "stand", "status").
+   * @returns {void}
+   */
   toggleFilterPanel(key) {
     const control = this.filterControls[key];
     if (!control || !control.panel) {
@@ -302,6 +336,7 @@ class ReportsPage {
     }
 
     const isOpen = !control.panel.classList.contains("hidden");
+    // Закрываем другие панели
     Object.keys(this.filterControls).forEach((filterKey) => {
       if (filterKey !== key) {
         this.closeFilterPanel(filterKey);
@@ -315,6 +350,12 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Закрывает панель конкретного фильтра.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   closeFilterPanel(key) {
     const control = this.filterControls[key];
     if (control && control.panel) {
@@ -322,6 +363,16 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Применение фильтра — собирает выбранные значения чекбоксов и обновляет состояние фильтров.
+   * После применения:
+   *  - обновляются счётчики
+   *  - закрывается панель
+   *  - перезагружается страница с сервера
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   handleFilterApply(key) {
     const control = this.filterControls[key];
     if (!control || !control.options) {
@@ -340,6 +391,12 @@ class ReportsPage {
     this.loadPage();
   }
 
+  /**
+   * Сбрасывает фильтр: снимает все чекбоксы, обновляет счётчики и, если был выбор — перезагружает страницу.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   handleFilterReset(key) {
     const control = this.filterControls[key];
     if (!control || !control.options) {
@@ -405,6 +462,24 @@ class ReportsPage {
     return params;
   }
 
+  /**
+   * Загружает страницу отчётов с сервера и обновляет представление.
+   *
+   * Ожидает ответ формата:
+   * {
+   *   items: Array<...>,
+   *   next_cursor: string|null,
+   *   prev_cursor: string|null,
+   *   has_next: boolean,
+   *   has_prev: boolean,
+   *   filters: { stands: [...], statuses: [...] }
+   * }
+   *
+   * @param {Object} [options] - Опции загрузки.
+   * @param {string|null} [options.cursor=null] - курсор для пагинации.
+   * @param {string} [options.direction="next"] - направление ("next" | "prev").
+   * @returns {Promise<void>}
+   */
   async loadPage({ cursor = null, direction = "next" } = {}) {
     this.setLoading(true);
     const params = this.buildQueryParams({ cursor, direction });
@@ -460,6 +535,12 @@ class ReportsPage {
     this.renderFilterOptions();
   }
 
+  /**
+   * Рисует опции фильтра в панели (чекбоксы).
+   * Если нет доступных значений — выводит подсказку.
+   *
+   * @returns {void}
+   */
   renderFilterOptions() {
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
@@ -496,6 +577,14 @@ class ReportsPage {
     this.updateFilterCounters();
   }
 
+  /**
+   * Строит безопасный id для инпута фильтра, нормализуя значение.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @param {string} value - Значение опции.
+   * @param {number} index - Индекс в массиве (используется как fallback).
+   * @returns {string} id для input.
+   */
   buildFilterInputId(key, value, index) {
     const normalized = String(value)
       .toLowerCase()
@@ -504,6 +593,11 @@ class ReportsPage {
     return `filter-${key}-${normalized || index}`;
   }
 
+  /**
+   * Обновляет видимые счётчики выбранных значений у каждого фильтра.
+   *
+   * @returns {void}
+   */
   updateFilterCounters() {
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
@@ -517,6 +611,13 @@ class ReportsPage {
     });
   }
 
+  /**
+   * Перерисовывает тело таблицы.
+   * При пустом списке — показывает сообщение.
+   *
+   * @param {Array<Object>} items - Массив элементов отчётов.
+   * @returns {void}
+   */
   renderRows(items = []) {
     if (!this.tableBody) {
       return;
@@ -580,6 +681,9 @@ class ReportsPage {
     this.adjustTableHeight();
   }
 
+  /**
+   * Проверяет, есть ли активные фильтры.
+   */
   hasActiveFilters() {
     const hasStandardFilters = Object.keys(this.filters).some(
       (key) => (this.filters[key] || []).length > 0
@@ -642,6 +746,14 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Подгоняет минимальную высоту таблицы так, чтобы интерфейс не гулял, когда текущая страница содержит мало строк.
+   *
+   * Логика:
+   *  - вычисляем высоту заголовка и примерной строки
+   *  - если defaultTableHeight ещё не установлен — используем fallback: limit * rowHeight
+   *  - минимальная высота = max(defaultTableHeight, header + bodyHeight)
+   */
   adjustTableHeight() {
     if (!this.tableWrapper) {
       return;
