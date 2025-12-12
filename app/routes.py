@@ -100,6 +100,8 @@ def get_reports_data():
 
     statuses = testrun_helpers.extract_filter_values("status")
     stands = testrun_helpers.extract_filter_values("stand")
+    start_date_from = flask.request.args.get("start_date_from")
+    start_date_to = flask.request.args.get("start_date_to")
 
     try:
         data = testrun_helpers.fetch_reports(
@@ -108,6 +110,8 @@ def get_reports_data():
             direction=direction,
             statuses=statuses,
             stands=stands,
+            start_date_from=start_date_from,
+            start_date_to=start_date_to,
         )
     except ValueError as exc:
         flask.abort(400, description=str(exc))

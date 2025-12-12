@@ -27,6 +27,12 @@ class ReportsPage {
       status: [],
     };
 
+    // Фильтры по дате
+    this.dateFilters = {
+      from: null,
+      to: null,
+    };
+
     this.tableBody = document.getElementById("reports-body");
     this.message = document.getElementById("reports-message");
     this.loadingIndicator = document.getElementById("reports-loading");
@@ -34,6 +40,15 @@ class ReportsPage {
     this.nextButton = document.getElementById("reports-next");
     this.tableWrapper = document.querySelector("[data-reports-table-wrapper]");
     this.defaultTableHeight = null;
+
+    // Элементы фильтра по дате
+    this.dateFromInput = document.getElementById("date-from");
+    this.dateToInput = document.getElementById("date-to");
+    this.dateApplyButton = document.getElementById("date-filter-apply");
+    this.dateResetButton = document.getElementById("date-filter-reset");
+    this.dateError = document.getElementById("date-error");
+    this.dateTrigger = document.getElementById("date-filter-trigger");
+    this.datePanel = document.getElementById("date-filter-panel");
 
     this.filterControls = this.initFilterControls();
     this.handleDocumentClick = this.handleDocumentClick.bind(this);
@@ -117,9 +132,120 @@ class ReportsPage {
     });
 
     document.addEventListener("click", this.handleDocumentClick);
+
+    // Обработчики для фильтров по дате
+    if (this.dateTrigger && this.datePanel) {
+      this.dateTrigger.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.toggleDatePanel();
+      });
+      // Авто-подстановка сегодняшней даты в "С" при первом открытии
+      this.dateTrigger.addEventListener("click", () => {
+        if (this.dateFromInput && !this.dateFromInput.value) {
+          const today = new Date();
+          const yyyy = today.getFullYear();
+          const mm = String(today.getMonth() + 1).padStart(2, "0");
+          const dd = String(today.getDate()).padStart(2, "0");
+          this.dateFromInput.value = `${yyyy}-${mm}-${dd}`;
+        }
+      });
+    }
+
+    if (this.dateApplyButton) {
+      this.dateApplyButton.addEventListener("click", () => {
+        this.handleDateFilterApply();
+      });
+    }
+
+    if (this.dateResetButton) {
+      this.dateResetButton.addEventListener("click", () => {
+        this.handleDateFilterReset();
+      });
+    }
+
+    // При нажатии Enter в полях даты — применить фильтр
+    if (this.dateFromInput) {
+      this.dateFromInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          this.handleDateFilterApply();
+        }
+      });
+    }
+    if (this.dateToInput) {
+      this.dateToInput.addEventListener("keypress", (e) => {
+        if (e.key === "Enter") {
+          this.handleDateFilterApply();
+        }
+      });
+    }
+  }
+
+  /**
+   * Валидирует и применяет фильтр по дате.
+   */
+  handleDateFilterApply() {
+    const fromValue = this.dateFromInput ? this.dateFromInput.value : null;
+    const toValue = this.dateToInput ? this.dateToInput.value : null;
+
+    // Скрываем предыдущую ошибку
+    this.showDateError("");
+
+    // Валидация: дата "с" должна быть <= дате "до"
+    if (fromValue && toValue && fromValue > toValue) {
+      this.showDateError("Дата 'С' должна быть меньше или равна дате 'По'");
+      return;
+    }
+
+    this.dateFilters.from = fromValue || null;
+    this.dateFilters.to = toValue || null;
+    this.loadPage();
+  }
+
+  /**
+   * Сбрасывает фильтр по дате.
+   */
+  handleDateFilterReset() {
+    if (this.dateFromInput) {
+      this.dateFromInput.value = "";
+    }
+    if (this.dateToInput) {
+      this.dateToInput.value = "";
+    }
+    this.showDateError("");
+
+    const hadDateFilter = this.dateFilters.from || this.dateFilters.to;
+    this.dateFilters.from = null;
+    this.dateFilters.to = null;
+
+    if (hadDateFilter) {
+      this.loadPage();
+    }
+  }
+
+  /**
+   * Показывает/скрывает сообщение об ошибке даты.
+   */
+  showDateError(text) {
+    if (!this.dateError) {
+      return;
+    }
+    if (!text) {
+      this.dateError.classList.add("hidden");
+      this.dateError.textContent = "";
+      return;
+    }
+    this.dateError.textContent = text;
+    this.dateError.classList.remove("hidden");
   }
 
   handleDocumentClick(event) {
+    // Закрыть панель дат, если клик вне
+    if (this.datePanel && this.dateTrigger) {
+      if (!this.datePanel.contains(event.target) && !this.dateTrigger.contains(event.target)) {
+        this.closeDatePanel();
+      }
+    }
+
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
       if (!control || !control.container) {
@@ -130,6 +256,24 @@ class ReportsPage {
         this.closeFilterPanel(key);
       }
     });
+  }
+
+  toggleDatePanel() {
+    if (!this.datePanel) return;
+    const isOpen = !this.datePanel.classList.contains("hidden");
+    if (isOpen) {
+      this.closeDatePanel();
+    } else {
+      // закрываем остальные фильтры
+      Object.keys(this.filterControls).forEach((key) => this.closeFilterPanel(key));
+      this.datePanel.classList.remove("hidden");
+    }
+  }
+
+  closeDatePanel() {
+    if (this.datePanel) {
+      this.datePanel.classList.add("hidden");
+    }
   }
 
   toggleFilterPanel(key) {
@@ -230,6 +374,14 @@ class ReportsPage {
         params.append(paramName, value);
       });
     });
+
+    // Добавляем параметры фильтрации по дате
+    if (this.dateFilters.from) {
+      params.append("start_date_from", this.dateFilters.from);
+    }
+    if (this.dateFilters.to) {
+      params.append("start_date_to", this.dateFilters.to);
+    }
 
     return params;
   }
@@ -379,8 +531,8 @@ class ReportsPage {
             : "text-gray-800";
 
         const runName = this.escapeHtml(item.run_name || "-");
-        const startDate = this.escapeHtml(item.start_date || "-");
-        const endDate = this.escapeHtml(item.end_date || "-");
+        const startDate = this.escapeHtml(this.formatLocalDate(item.start_date));
+        const endDate = this.escapeHtml(this.formatLocalDate(item.end_date));
         const stand = this.escapeHtml(item.stand || "-");
         const status = this.escapeHtml(item.status || "-");
 
@@ -408,9 +560,11 @@ class ReportsPage {
   }
 
   hasActiveFilters() {
-    return Object.keys(this.filters).some(
+    const hasStandardFilters = Object.keys(this.filters).some(
       (key) => (this.filters[key] || []).length > 0
     );
+    const hasDateFilters = this.dateFilters.from || this.dateFilters.to;
+    return hasStandardFilters || hasDateFilters;
   }
 
   /**
@@ -438,6 +592,33 @@ class ReportsPage {
       .replace(/>/g, "&gt;")
       .replace(/"/g, "&quot;")
       .replace(/'/g, "&#39;");
+  }
+
+  /**
+   * Форматирует ISO дату в локальный часовой пояс пользователя.
+   * @param {string} isoDateString - дата в формате ISO (например "2025-12-11T12:30:00")
+   * @returns {string} отформатированная дата или "-" если входные данные пустые
+   */
+  formatLocalDate(isoDateString) {
+    if (!isoDateString || isoDateString === "-") {
+      return "-";
+    }
+    try {
+      const date = new Date(isoDateString);
+      if (isNaN(date.getTime())) {
+        return isoDateString;
+      }
+      const pad = (n) => String(n).padStart(2, "0");
+      const hh = pad(date.getHours());
+      const mm = pad(date.getMinutes());
+      const ss = pad(date.getSeconds());
+      const dd = pad(date.getDate());
+      const mon = pad(date.getMonth() + 1);
+      const yyyy = date.getFullYear();
+      return `${hh}:${mm}:${ss}, ${dd}.${mon}.${yyyy}`;
+    } catch {
+      return isoDateString;
+    }
   }
 
   adjustTableHeight() {
