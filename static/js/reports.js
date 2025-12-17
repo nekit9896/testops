@@ -10,6 +10,7 @@ class ReportsPage {
     this.dataUrl = dataUrl;
     this.limit = limit;
     // Состояние курсоров для пагинации
+    // Состояние курсоров для пагинации
     this.state = {
       nextCursor: null,
       prevCursor: null,
@@ -21,10 +22,12 @@ class ReportsPage {
       status: { param: "status", responseKey: "statuses" },
     };
     // Выбранные пользователем значения фильтров
+    // Выбранные пользователем значения фильтров
     this.filters = {
       stand: [],
       status: [],
     };
+    // Доступные значения фильтров, приходящие с сервера
     // Доступные значения фильтров, приходящие с сервера
     this.availableFilters = {
       stand: [],
@@ -37,12 +40,20 @@ class ReportsPage {
       to: null,
     };
 
+    // Фильтры по дате
+    this.dateFilters = {
+      from: null,
+      to: null,
+    };
+
+    // DOM-узлы страницы
     this.tableBody = document.getElementById("reports-body");
     this.message = document.getElementById("reports-message");
     this.loadingIndicator = document.getElementById("reports-loading");
     this.prevButton = document.getElementById("reports-prev");
     this.nextButton = document.getElementById("reports-next");
     this.tableWrapper = document.querySelector("[data-reports-table-wrapper]");
+    // Кэш исходной высоты таблицы (чтобы таблица не прыгала при коротких страницах)
     // Кэш исходной высоты таблицы (чтобы таблица не прыгала при коротких страницах)
     this.defaultTableHeight = null;
 
@@ -55,6 +66,16 @@ class ReportsPage {
     this.dateTrigger = document.getElementById("date-filter-trigger");
     this.datePanel = document.getElementById("date-filter-panel");
 
+    // Элементы фильтра по дате
+    this.dateFromInput = document.getElementById("date-from");
+    this.dateToInput = document.getElementById("date-to");
+    this.dateApplyButton = document.getElementById("date-filter-apply");
+    this.dateResetButton = document.getElementById("date-filter-reset");
+    this.dateError = document.getElementById("date-error");
+    this.dateTrigger = document.getElementById("date-filter-trigger");
+    this.datePanel = document.getElementById("date-filter-panel");
+
+    // Инициализируем элементы управления фильтрами и привязываем события
     this.filterControls = this.initFilterControls();
     this.dateCounter = document.getElementById("date-filter-counter");
     this.handleDocumentClick = this.handleDocumentClick.bind(this);
@@ -64,6 +85,18 @@ class ReportsPage {
     this.loadPage();
   }
 
+  /**
+   * Находит и собирает контролы управления фильтрами из DOM.
+   *
+   * Возвращает объект вида:
+   * {
+   *   <key>: {
+   *     container, toggle, panel, options, apply, counter, reset
+   *   }
+   * }
+   *
+   * @returns {Object<string, Object>} controls - Собранные узлы управления фильтрами.
+   */
   /**
    * Находит и собирает контролы управления фильтрами из DOM.
    *
@@ -106,6 +139,14 @@ class ReportsPage {
     return controls;
   }
 
+  /**
+   * Привязывает обработчики событий к элементам страницы:
+   *  - кнопки пагинации
+   *  - кнопки управления фильтрами
+   *  - глобальный клик для закрытия панелей фильтров
+   *
+   * @returns {void}
+   */
   /**
    * Привязывает обработчики событий к элементам страницы:
    *  - кнопки пагинации
@@ -161,7 +202,7 @@ class ReportsPage {
 
     // Закрываем открытые панели при клике вне панелей
     document.addEventListener("click", this.handleDocumentClick);
-
+    
     // Обработчики для фильтров по дате
     if (this.dateTrigger && this.datePanel) {
       this.dateTrigger.addEventListener("click", (event) => {
@@ -272,7 +313,12 @@ class ReportsPage {
     this.dateError.textContent = text;
     this.dateError.classList.remove("hidden");
   }
+  }
 
+  /**
+   * Обработчик глобального клика по документу.
+   * Закрывает все панели фильтров, в которые не входит целевой элемент клика.
+   */
   handleDocumentClick(event) {
     // Закрыть панель дат, если клик вне
     if (this.datePanel && this.dateTrigger) {
@@ -337,6 +383,7 @@ class ReportsPage {
 
     const isOpen = !control.panel.classList.contains("hidden");
     // Закрываем другие панели
+    // Закрываем другие панели
     Object.keys(this.filterControls).forEach((filterKey) => {
       if (filterKey !== key) {
         this.closeFilterPanel(filterKey);
@@ -356,6 +403,12 @@ class ReportsPage {
    * @param {string} key - Ключ фильтра.
    * @returns {void}
    */
+  /**
+   * Закрывает панель конкретного фильтра.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   closeFilterPanel(key) {
     const control = this.filterControls[key];
     if (control && control.panel) {
@@ -363,6 +416,16 @@ class ReportsPage {
     }
   }
 
+  /**
+   * Применение фильтра — собирает выбранные значения чекбоксов и обновляет состояние фильтров.
+   * После применения:
+   *  - обновляются счётчики
+   *  - закрывается панель
+   *  - перезагружается страница с сервера
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   /**
    * Применение фильтра — собирает выбранные значения чекбоксов и обновляет состояние фильтров.
    * После применения:
@@ -391,6 +454,12 @@ class ReportsPage {
     this.loadPage();
   }
 
+  /**
+   * Сбрасывает фильтр: снимает все чекбоксы, обновляет счётчики и, если был выбор — перезагружает страницу.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @returns {void}
+   */
   /**
    * Сбрасывает фильтр: снимает все чекбоксы, обновляет счётчики и, если был выбор — перезагружает страницу.
    *
@@ -480,6 +549,24 @@ class ReportsPage {
    * @param {string} [options.direction="next"] - направление ("next" | "prev").
    * @returns {Promise<void>}
    */
+  /**
+   * Загружает страницу отчётов с сервера и обновляет представление.
+   *
+   * Ожидает ответ формата:
+   * {
+   *   items: Array<...>,
+   *   next_cursor: string|null,
+   *   prev_cursor: string|null,
+   *   has_next: boolean,
+   *   has_prev: boolean,
+   *   filters: { stands: [...], statuses: [...] }
+   * }
+   *
+   * @param {Object} [options] - Опции загрузки.
+   * @param {string|null} [options.cursor=null] - курсор для пагинации.
+   * @param {string} [options.direction="next"] - направление ("next" | "prev").
+   * @returns {Promise<void>}
+   */
   async loadPage({ cursor = null, direction = "next" } = {}) {
     this.setLoading(true);
     const params = this.buildQueryParams({ cursor, direction });
@@ -541,6 +628,12 @@ class ReportsPage {
    *
    * @returns {void}
    */
+  /**
+   * Рисует опции фильтра в панели (чекбоксы).
+   * Если нет доступных значений — выводит подсказку.
+   *
+   * @returns {void}
+   */
   renderFilterOptions() {
     Object.keys(this.filterControls).forEach((key) => {
       const control = this.filterControls[key];
@@ -585,6 +678,14 @@ class ReportsPage {
    * @param {number} index - Индекс в массиве (используется как fallback).
    * @returns {string} id для input.
    */
+  /**
+   * Строит безопасный id для инпута фильтра, нормализуя значение.
+   *
+   * @param {string} key - Ключ фильтра.
+   * @param {string} value - Значение опции.
+   * @param {number} index - Индекс в массиве (используется как fallback).
+   * @returns {string} id для input.
+   */
   buildFilterInputId(key, value, index) {
     const normalized = String(value)
       .toLowerCase()
@@ -593,6 +694,11 @@ class ReportsPage {
     return `filter-${key}-${normalized || index}`;
   }
 
+  /**
+   * Обновляет видимые счётчики выбранных значений у каждого фильтра.
+   *
+   * @returns {void}
+   */
   /**
    * Обновляет видимые счётчики выбранных значений у каждого фильтра.
    *
@@ -611,6 +717,13 @@ class ReportsPage {
     });
   }
 
+  /**
+   * Перерисовывает тело таблицы.
+   * При пустом списке — показывает сообщение.
+   *
+   * @param {Array<Object>} items - Массив элементов отчётов.
+   * @returns {void}
+   */
   /**
    * Перерисовывает тело таблицы.
    * При пустом списке — показывает сообщение.
@@ -681,6 +794,9 @@ class ReportsPage {
     this.adjustTableHeight();
   }
 
+  /**
+   * Проверяет, есть ли активные фильтры.
+   */
   /**
    * Проверяет, есть ли активные фильтры.
    */
