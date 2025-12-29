@@ -1,4 +1,5 @@
 import datetime
+from zoneinfo import ZoneInfo
 import io
 import json
 import os
@@ -464,6 +465,15 @@ def check_files_size(files: list, max_size: int = None) -> bool:
 def _format_datetime(value: Optional[datetime.datetime]) -> Optional[str]:
     if not value:
         return None
+    try:
+        # Считаем входные даты в UTC, приводим к часовому поясу Москвы
+        moscow_tz = ZoneInfo("Europe/Moscow")
+        if value.tzinfo is None:
+            value = value.replace(tzinfo=datetime.timezone.utc)
+        value = value.astimezone(moscow_tz)
+    except Exception:
+        # Если что-то пошло не так, возвращаем как есть
+        pass
     return value.strftime(const.VIEW_DATE_FORMAT)
 
 
