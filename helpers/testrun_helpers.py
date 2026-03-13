@@ -6,7 +6,7 @@ import os
 import shutil
 import subprocess
 import tempfile
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 
 import flask
 from flask import abort
@@ -180,42 +180,89 @@ def _safe_int(value: Optional[int]) -> Optional[int]:
         return None
 
 
-def _status_indicates_failure(status: Optional[str]) -> bool:
-    """Возвращает True, если значение статуса сигнализирует о неуспехе."""
-    if not status:
-        return False
-    return str(status).lower() != const.STATUS_PASS
+RunStatusSignal = Literal["none", "fail", "broken"]
 
 
-def _steps_contain_failure(steps: Optional[Sequence[dict]]) -> bool:
-    """Рекурсивно проверяет шаги на наличие статусов отличных от passed."""
+def _normalize_status_value(status: Optional[str]) -> Optional[str]:
+    if status is None:
+        return None
+    normalized = str(status).strip().lower()
+    return normalized or None
+
+
+def _status_signal_from_value(status: Optional[str]) -> RunStatusSignal:
+    """
+    Возвращает значимость статуса для итогового прогона:
+    broken > fail > none (passed/skipped/отсутствует).
+    """
+    normalized = _normalize_status_value(status)
+    if normalized is None:
+        return "none"
+    if normalized == const.STATUS_BROKEN:
+        return "broken"
+    if normalized in {const.STATUS_FAIL, "failed"}:
+        return "fail"
+    if normalized in {
+        const.STATUS_PASS,
+        const.STATUS_SKIPPED,
+        const.STATUS_DESELECTED,
+    }:
+        return "none"
+    # Неизвестные статусы считаем неуспешными, чтобы не показывать ложный "passed".
+    return "fail"
+
+
+def _merge_status_signals(
+    current: RunStatusSignal, candidate: RunStatusSignal
+) -> RunStatusSignal:
+    if current == "broken" or candidate == "broken":
+        return "broken"
+    if current == "fail" or candidate == "fail":
+        return "fail"
+    return "none"
+
+
+def _collect_steps_status_signal(steps: Optional[Sequence[dict]]) -> RunStatusSignal:
+    """Рекурсивно собирает самый приоритетный статус из шагов."""
     if not steps:
-        return False
+        return "none"
 
+    signal: RunStatusSignal = "none"
     for step in steps:
-        if _status_indicates_failure(step.get(const.STATUS_KEY)):
-            return True
-        if _steps_contain_failure(step.get("steps")):
-            return True
-    return False
+        signal = _merge_status_signals(
+            signal, _status_signal_from_value(step.get(const.STATUS_KEY))
+        )
+        signal = _merge_status_signals(signal, _collect_steps_status_signal(step.get("steps")))
+        if signal == "broken":
+            return signal
+    return signal
 
 
-def _result_contains_failure(data: dict) -> bool:
-    """Проверяет результат теста на наличие любых неуспешных статусов."""
-    if _status_indicates_failure(data.get(const.STATUS_KEY)):
-        return True
-
-    if _steps_contain_failure(data.get("steps")):
-        return True
+def _collect_result_status_signal(data: dict) -> RunStatusSignal:
+    """Собирает итоговый сигнал статуса из теста, его шагов, befores и afters."""
+    signal = _status_signal_from_value(data.get(const.STATUS_KEY))
+    signal = _merge_status_signals(signal, _collect_steps_status_signal(data.get("steps")))
 
     for section in ("befores", "afters"):
         for entry in data.get(section, []):
-            if _status_indicates_failure(entry.get(const.STATUS_KEY)):
-                return True
-            if _steps_contain_failure(entry.get("steps")):
-                return True
+            signal = _merge_status_signals(
+                signal, _status_signal_from_value(entry.get(const.STATUS_KEY))
+            )
+            signal = _merge_status_signals(
+                signal, _collect_steps_status_signal(entry.get("steps"))
+            )
+            if signal == "broken":
+                return signal
 
-    return False
+    return signal
+
+
+def _run_status_from_signal(signal: RunStatusSignal) -> str:
+    if signal == "broken":
+        return const.STATUS_BROKEN
+    if signal == "fail":
+        return const.STATUS_FAIL
+    return const.STATUS_PASS
 
 
 def allowed_file(filename: str) -> bool:
@@ -284,10 +331,11 @@ def check_all_tests_passed_run(
     а также время начала и окончания выполнения тестов.
 
     Метод анализирует список файлов, содержащих результаты выполнения автотестов,
-    и определяет общий статус тестирования. Если хотя бы один тест не прошел успешно,
-    статус тестрана будет установлен как 'fail'. Время начала и окончания тестов определяется
-    либо из контейнерного файла, если он присутствует, либо из файлов с результатами,
-    если контейнерный файл отсутствует.
+    и определяет общий статус тестирования по приоритету:
+    'broken' > 'fail' > 'passed'.
+    Статус 'skipped' не влияет на итоговый статус тестрана.
+    Время начала и окончания тестов определяется либо из контейнерного файла,
+    если он присутствует, либо из файлов с результатами, если контейнерный файл отсутствует.
 
     Параметры:
         files (list): Список файлов, содержащих результаты выполнения автотестов.
@@ -296,7 +344,8 @@ def check_all_tests_passed_run(
 
     Возвращает:
         dict: Словарь с ключами и значениями:
-            - const.STATUS_KEY: Статус выполнения тестов ('passed' или 'fail').
+            - const.STATUS_KEY: Статус выполнения тестов
+              ('passed', 'fail', 'broken' или 'skipped').
             - const.START_RUN_KEY: Время начала выполнения тестов в строковом формате
               (или None, если время не определено).
             - const.STOP_RUN_KEY: Время окончания выполнения тестов в строковом формате
@@ -313,7 +362,9 @@ def check_all_tests_passed_run(
         - Конвертирует временные метки в строковый формат.
         - Возвращает словарь с итоговыми данными.
     """
-    status = const.STATUS_PASS
+    status_signal: RunStatusSignal = "none"
+    has_non_skipped_status = False
+    has_skipped_like_status = False
     logger.info("Проверка статусов автотестов внутри данного отчета")
 
     result_start_times: list[int] = []
@@ -327,12 +378,18 @@ def check_all_tests_passed_run(
             data = parse_json_file(file)
 
             if not data:
-                status = const.STATUS_FAIL
+                status_signal = _merge_status_signals(status_signal, "fail")
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
-                if _result_contains_failure(data):
-                    status = const.STATUS_FAIL
+                file_status_signal = _collect_result_status_signal(data)
+                status_signal = _merge_status_signals(status_signal, file_status_signal)
+                if file_status_signal != "none":
                     logger.info("В файле %s обнаружены неуспешные шаги", filename)
+                test_status = _normalize_status_value(data.get(const.STATUS_KEY))
+                if test_status in {const.STATUS_SKIPPED, const.STATUS_DESELECTED}:
+                    has_skipped_like_status = True
+                elif test_status is not None:
+                    has_non_skipped_status = True
 
                 start_ms = _safe_int(data.get(const.START_RUN_KEY))
                 stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
@@ -356,6 +413,14 @@ def check_all_tests_passed_run(
         format_timestamp(container_start_ms) if container_start_ms else None
     )
     stop_time_str = format_timestamp(container_stop_ms) if container_stop_ms else None
+
+    status = _run_status_from_signal(status_signal)
+    if (
+        status_signal == "none"
+        and has_skipped_like_status
+        and not has_non_skipped_status
+    ):
+        status = const.STATUS_SKIPPED
 
     logger.info(
         "Итоговый статус тестов: %s, start=%s, stop=%s",

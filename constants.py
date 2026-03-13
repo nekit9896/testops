@@ -1,3 +1,5 @@
+import os
+
 # IP
 PORT = 5000
 HOST = "0.0.0.0"
@@ -9,7 +11,13 @@ ALLURE_RESULT_FOLDER_NAME = "allure-results"
 # Files
 ALLOWED_EXTENSIONS = {"html", "json", "txt", "properties"}
 ALLURE_REPORT_NAME = "index.html"
-LOG_FILE_NAME = "logs.json"
+
+# Logging
+LOG_FILE_NAME: str = "app.log"
+LOG_DIR: str = os.getenv("LOG_DIR", "")  # пустая строка = только stdout, без файла
+LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
+LOG_MAX_BYTES: int = int(os.getenv("LOG_MAX_BYTES", "10485760"))  # 10 MB
+LOG_BACKUP_COUNT: int = int(os.getenv("LOG_BACKUP_COUNT", "5"))
 
 # MinIO
 ALLURE_RESULTS_BUCKET_NAME = "allure-results-bucket"
@@ -37,6 +45,9 @@ STATUS_KEY = "status"
 PENDING_STATUS = "pending"
 STATUS_PASS = "passed"
 STATUS_FAIL = "fail"
+STATUS_BROKEN = "broken"
+STATUS_SKIPPED = "skipped"
+STATUS_DESELECTED = "deselected"
 ENCODING = "utf-8"
 RESULT_NAMING = "result.json"
 CONTAINER_NAMING = "container.json"

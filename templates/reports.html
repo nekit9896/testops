@@ -140,13 +140,14 @@
   </div>
 
   <div id="reports-loading" class="text-sm text-gray-500 hidden">Загрузка...</div>
+  <div id="reports-message" class="text-sm text-gray-500 hidden" aria-live="polite"></div>
 </section>
 {% endblock %}
 
 {% block scripts %}
   {{ super() }}
   <!-- Загрузка данных и управление таблицей -->
-  <script src="{{ url_for('static', filename='js/reports.js') }}" defer></script>
+  <script src="{{ url_for('static', filename='js/reports.js', v=reports_js_version) }}" defer></script>
   <script defer>
     document.addEventListener('DOMContentLoaded', function () {
       const container = document.querySelector('section[data-page-limit]');
@@ -155,7 +156,19 @@
           ? Number(container.dataset.pageLimit)
           : null;
       const resolvedLimit = limitAttr || 20;
-      window.reportsPage = new ReportsPage({
+      if (typeof window.ReportsPage !== 'function') {
+        const body = document.getElementById('reports-body');
+        if (body) {
+          body.innerHTML = `
+            <tr>
+              <td colspan="7" class="px-4 py-6 text-center text-sm text-red-600">
+                Не удалось инициализировать страницу отчётов. Обновите страницу.
+              </td>
+            </tr>`;
+        }
+        return;
+      }
+      window.reportsPage = new window.ReportsPage({
         dataUrl: "{{ url_for('routes.get_reports_data') }}",
         limit: resolvedLimit
       });

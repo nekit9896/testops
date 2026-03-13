@@ -1,3 +1,4 @@
+import os
 from typing import List, Optional
 
 import flask
@@ -83,8 +84,16 @@ def get_reports():
     """
     Возвращает страницу со списком отчетов
     """
+    reports_js_path = os.path.join(flask.current_app.static_folder, "js", "reports.js")
+    try:
+        reports_js_version = str(int(os.path.getmtime(reports_js_path)))
+    except OSError:
+        reports_js_version = "1"
+
     return flask.render_template(
-        const.TEMPLATE_REPORTS, page_limit=const.REPORTS_PAGE_LIMIT
+        const.TEMPLATE_REPORTS,
+        page_limit=const.REPORTS_PAGE_LIMIT,
+        reports_js_version=reports_js_version,
     )
 
 
