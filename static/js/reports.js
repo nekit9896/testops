@@ -654,7 +654,7 @@ class ReportsPage {
           const statusValue = String(item.status || "").toLowerCase();
           let statusClass = "text-gray-800";
           let statusStyle = "";
-          if (statusValue === "fail") {
+          if (statusValue === "failed") {
             statusClass = "text-red-600";
           } else if (statusValue === "passed") {
             statusClass = "text-green-600";
