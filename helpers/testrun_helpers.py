@@ -22,6 +22,8 @@ from app.models import TestResult
 from helpers.allure_utils import extract_stand_from_environment_file
 from logger import init_logger
 
+RunStatusSignal = Literal["none", "fail", "broken"]
+
 minio_client = MinioClient()
 logger = init_logger()
 
@@ -180,9 +182,6 @@ def _safe_int(value: Optional[int]) -> Optional[int]:
         return None
 
 
-RunStatusSignal = Literal["none", "fail", "broken"]
-
-
 def _normalize_status_value(status: Optional[str]) -> Optional[str]:
     if status is None:
         return None
@@ -200,7 +199,7 @@ def _status_signal_from_value(status: Optional[str]) -> RunStatusSignal:
         return "none"
     if normalized == const.STATUS_BROKEN:
         return "broken"
-    if normalized in {const.STATUS_FAIL, "failed"}:
+    if normalized in {const.STATUS_FAIL}:
         return "fail"
     if normalized in {
         const.STATUS_PASS,
@@ -381,10 +380,10 @@ def check_all_tests_passed_run(
                 status_signal = _merge_status_signals(status_signal, "fail")
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
-                file_status_signal = _collect_result_status_signal(data)
+                file_status_signal = _status_signal_from_value(data.get(const.STATUS_KEY))
                 status_signal = _merge_status_signals(status_signal, file_status_signal)
                 if file_status_signal != "none":
-                    logger.info("В файле %s обнаружены неуспешные шаги", filename)
+                    logger.info("В файле %s обнаружен неуспешный статус теста", filename)
                 test_status = _normalize_status_value(data.get(const.STATUS_KEY))
                 if test_status in {const.STATUS_SKIPPED, const.STATUS_DESELECTED}:
                     has_skipped_like_status = True
