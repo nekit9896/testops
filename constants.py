@@ -1,16 +1,20 @@
+# IP
 import os
 
-# IP
 PORT = 5000
 HOST = "0.0.0.0"
 
 # Folders
 ALLURE_REPORT_FOLDER_NAME = "allure-reports"  # Отсюда читаются готовые отчеты
-ALLURE_RESULT_FOLDER_NAME = "allure-results"
+ALLURE_RESULT_FOLDER_NAME = (
+    "allure-results"  # Здесь в отдельных директориях будут находиться данные о прогоне
+)
 
 # Files
 ALLOWED_EXTENSIONS = {"html", "json", "txt", "properties"}
 ALLURE_REPORT_NAME = "index.html"
+ALLURE_RESULTS_ARCHIVE_NAME = "allure-results.tar.gz"
+ALLURE_RESULTS_ARCHIVE_SUFFIX = ".tar.gz"
 
 # Logging
 LOG_FILE_NAME: str = "app.log"
@@ -44,7 +48,7 @@ HTML_CONTENT_TYPE = "text/html"
 STATUS_KEY = "status"
 PENDING_STATUS = "pending"
 STATUS_PASS = "passed"
-STATUS_FAIL = "failed"
+STATUS_FAIL = "fail"
 STATUS_BROKEN = "broken"
 STATUS_SKIPPED = "skipped"
 STATUS_DESELECTED = "deselected"
@@ -64,3 +68,7 @@ TESTCASE_PER_PAGE_LIMIT = 15
 DB_DATE_FORMAT = "%Y%m%d_%H%M%S"
 VIEW_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 MAX_FILE_SIZE = 52428800  # 50 Mb в байтах
+TEXT_FIELD_NAME = "name"
+TEXT_FIELD_PRECONDITION = "preconditions"
+TEXT_FIELD_DESCRIPTION = "description"
+TEXT_FIELD_EXPECTED_RESULT = "expected_result"

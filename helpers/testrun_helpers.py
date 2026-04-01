@@ -1,12 +1,13 @@
 import datetime
-from zoneinfo import ZoneInfo
 import io
 import json
 import os
 import shutil
 import subprocess
+import tarfile
 import tempfile
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
+from zoneinfo import ZoneInfo
 
 import flask
 from flask import abort
@@ -130,6 +131,47 @@ def _extract_stand_value(filename: str, file_content: bytes) -> Optional[str]:
     return stand.strip() if stand else None
 
 
+def _is_allure_results_archive(filename: str) -> bool:
+    """Проверяет, что загружен архив allure-results.tar.gz."""
+    return filename.lower().endswith(const.ALLURE_RESULTS_ARCHIVE_SUFFIX)
+
+
+def _safe_extract_tar_gz_bytes(archive_bytes: bytes, destination_dir: str) -> None:
+    """
+    Безопасно распаковывает tar.gz, блокируя path traversal.
+    """
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+        abs_destination = os.path.abspath(destination_dir)
+        for member in tar.getmembers():
+            member_target = os.path.abspath(os.path.join(destination_dir, member.name))
+            if not member_target.startswith(abs_destination + os.sep) and (
+                member_target != abs_destination
+            ):
+                raise ValueError(f"Небезопасный путь в архиве: {member.name}")
+        tar.extractall(destination_dir)
+
+
+def _extract_stand_from_archive(archive_bytes: bytes) -> Optional[str]:
+    """
+    Извлекает stand из environment.properties внутри tar.gz архива.
+    """
+    try:
+        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+            for member in tar.getmembers():
+                if not member.isfile():
+                    continue
+                if os.path.basename(member.name) != "environment.properties":
+                    continue
+                fileobj = tar.extractfile(member)
+                if not fileobj:
+                    continue
+                raw = fileobj.read()
+                return _extract_stand_value("environment.properties", raw)
+    except tarfile.TarError:
+        logger.exception("Не удалось разобрать архив для извлечения stand")
+    return None
+
+
 def _persist_detected_stand(run_name: str, detected_stand: str) -> None:
     """Сохраняет значение stand в TestResult, если запись существует."""
     try:
@@ -174,6 +216,40 @@ def _upload_file_to_minio(run_name: str, filename: str, file_content: bytes) -> 
     )
 
 
+def _read_allure_json_from_archive(file: FileStorage) -> list[tuple[str, dict]]:
+    """
+    Считывает JSON-объекты result/container из tar.gz для анализа статуса/времени.
+    """
+    file.seek(0)
+    archive_bytes = file.read()
+    if not archive_bytes:
+        raise ValueError("Архив пустой.")
+
+    collected: list[tuple[str, dict]] = []
+    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            basename = os.path.basename(member.name)
+            if not (
+                basename.endswith(const.RESULT_NAMING)
+                or basename.endswith(const.CONTAINER_NAMING)
+            ):
+                continue
+            fileobj = tar.extractfile(member)
+            if not fileobj:
+                continue
+            raw = fileobj.read()
+            try:
+                parsed = json.loads(raw.decode(const.ENCODING))
+            except (UnicodeDecodeError, json.JSONDecodeError):
+                logger.warning("Некорректный JSON в архиве: %s", member.name)
+                collected.append((basename, {}))
+                continue
+            collected.append((basename, parsed))
+    return collected
+
+
 def _safe_int(value: Optional[int]) -> Optional[int]:
     """Безопасно преобразует значение к int."""
     try:
@@ -198,9 +274,9 @@ def _status_signal_from_value(status: Optional[str]) -> RunStatusSignal:
     if normalized is None:
         return "none"
     if normalized == const.STATUS_BROKEN:
-        return "broken"
-    if normalized in {const.STATUS_FAIL}:
-        return "fail"
+        return const.STATUS_BROKEN
+    if normalized in {const.STATUS_FAIL, "failed"}:
+        return const.STATUS_FAIL
     if normalized in {
         const.STATUS_PASS,
         const.STATUS_SKIPPED,
@@ -208,16 +284,16 @@ def _status_signal_from_value(status: Optional[str]) -> RunStatusSignal:
     }:
         return "none"
     # Неизвестные статусы считаем неуспешными, чтобы не показывать ложный "passed".
-    return "fail"
+    return const.STATUS_FAIL
 
 
 def _merge_status_signals(
     current: RunStatusSignal, candidate: RunStatusSignal
 ) -> RunStatusSignal:
-    if current == "broken" or candidate == "broken":
-        return "broken"
-    if current == "fail" or candidate == "fail":
-        return "fail"
+    if current == const.STATUS_BROKEN or candidate == const.STATUS_BROKEN:
+        return const.STATUS_BROKEN
+    if current == const.STATUS_FAIL or candidate == const.STATUS_FAIL:
+        return const.STATUS_FAIL
     return "none"
 
 
@@ -231,8 +307,10 @@ def _collect_steps_status_signal(steps: Optional[Sequence[dict]]) -> RunStatusSi
         signal = _merge_status_signals(
             signal, _status_signal_from_value(step.get(const.STATUS_KEY))
         )
-        signal = _merge_status_signals(signal, _collect_steps_status_signal(step.get("steps")))
-        if signal == "broken":
+        signal = _merge_status_signals(
+            signal, _collect_steps_status_signal(step.get("steps"))
+        )
+        if signal == const.STATUS_BROKEN:
             return signal
     return signal
 
@@ -240,7 +318,9 @@ def _collect_steps_status_signal(steps: Optional[Sequence[dict]]) -> RunStatusSi
 def _collect_result_status_signal(data: dict) -> RunStatusSignal:
     """Собирает итоговый сигнал статуса из теста, его шагов, befores и afters."""
     signal = _status_signal_from_value(data.get(const.STATUS_KEY))
-    signal = _merge_status_signals(signal, _collect_steps_status_signal(data.get("steps")))
+    signal = _merge_status_signals(
+        signal, _collect_steps_status_signal(data.get("steps"))
+    )
 
     for section in ("befores", "afters"):
         for entry in data.get(section, []):
@@ -250,16 +330,16 @@ def _collect_result_status_signal(data: dict) -> RunStatusSignal:
             signal = _merge_status_signals(
                 signal, _collect_steps_status_signal(entry.get("steps"))
             )
-            if signal == "broken":
+            if signal == const.STATUS_BROKEN:
                 return signal
 
     return signal
 
 
 def _run_status_from_signal(signal: RunStatusSignal) -> str:
-    if signal == "broken":
+    if signal == const.STATUS_BROKEN:
         return const.STATUS_BROKEN
-    if signal == "fail":
+    if signal == const.STATUS_FAIL:
         return const.STATUS_FAIL
     return const.STATUS_PASS
 
@@ -268,6 +348,8 @@ def allowed_file(filename: str) -> bool:
     """
     По точке находим расширение файла и проверяем на соответствие списка разрешенных в ALLOWED_EXTENSIONS
     """
+    if _is_allure_results_archive(filename):
+        return True
     return (
         "." in filename
         and filename.rsplit(".", 1)[1].lower() in const.ALLOWED_EXTENSIONS
@@ -286,9 +368,14 @@ def process_and_upload_file(run_name: str, file: FileStorage) -> str:
         file_content = _read_file_content(file)
         logger.info("Размер файла %s: %s байт", filename, len(file_content))
 
-        detected_stand = _extract_stand_value(filename, file_content)
-
-        _upload_file_to_minio(run_name, filename, file_content)
+        if _is_allure_results_archive(filename):
+            detected_stand = _extract_stand_from_archive(file_content)
+            _upload_file_to_minio(
+                run_name, const.ALLURE_RESULTS_ARCHIVE_NAME, file_content
+            )
+        else:
+            detected_stand = _extract_stand_value(filename, file_content)
+            _upload_file_to_minio(run_name, filename, file_content)
 
         if detected_stand:
             logger.info(
@@ -368,22 +455,70 @@ def check_all_tests_passed_run(
 
     result_start_times: list[int] = []
     result_stop_times: list[int] = []
+    container_start_times: list[int] = []
+    container_stop_times: list[int] = []
     container_start_ms: Optional[int] = None
     container_stop_ms: Optional[int] = None
 
     for file in files:
         filename = getattr(file, "filename", "") or ""
-        if filename.endswith(const.RESULT_NAMING):
+        if _is_allure_results_archive(filename):
+            try:
+                archive_entries = _read_allure_json_from_archive(file)
+            except (tarfile.TarError, ValueError) as archive_error:
+                logger.warning(
+                    "Не удалось разобрать архив %s: %s", filename, archive_error
+                )
+                status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
+                continue
+
+            for entry_name, data in archive_entries:
+                if not data:
+                    status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
+                    continue
+                if entry_name.endswith(const.RESULT_NAMING):
+                    # Итоговый статус прогона считаем только по статусам тест-кейсов.
+                    file_status_signal = _status_signal_from_value(
+                        data.get(const.STATUS_KEY)
+                    )
+                    status_signal = _merge_status_signals(
+                        status_signal, file_status_signal
+                    )
+                    test_status = _normalize_status_value(data.get(const.STATUS_KEY))
+                    if test_status in {const.STATUS_SKIPPED, const.STATUS_DESELECTED}:
+                        has_skipped_like_status = True
+                    elif test_status is not None:
+                        has_non_skipped_status = True
+
+                    start_ms = _safe_int(data.get(const.START_RUN_KEY))
+                    stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
+                    if start_ms is not None:
+                        result_start_times.append(start_ms)
+                    if stop_ms is not None:
+                        result_stop_times.append(stop_ms)
+                elif entry_name.endswith(const.CONTAINER_NAMING):
+                    container_start = _safe_int(data.get(const.START_RUN_KEY))
+                    container_stop = _safe_int(data.get(const.STOP_RUN_KEY))
+                    if container_start is not None:
+                        container_start_times.append(container_start)
+                    if container_stop is not None:
+                        container_stop_times.append(container_stop)
+
+        elif filename.endswith(const.RESULT_NAMING):
             data = parse_json_file(file)
 
             if not data:
-                status_signal = _merge_status_signals(status_signal, "fail")
+                status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
-                file_status_signal = _status_signal_from_value(data.get(const.STATUS_KEY))
+                file_status_signal = _status_signal_from_value(
+                    data.get(const.STATUS_KEY)
+                )
                 status_signal = _merge_status_signals(status_signal, file_status_signal)
                 if file_status_signal != "none":
-                    logger.info("В файле %s обнаружен неуспешный статус теста", filename)
+                    logger.info(
+                        "В файле %s обнаружен неуспешный статус теста", filename
+                    )
                 test_status = _normalize_status_value(data.get(const.STATUS_KEY))
                 if test_status in {const.STATUS_SKIPPED, const.STATUS_DESELECTED}:
                     has_skipped_like_status = True
@@ -400,8 +535,17 @@ def check_all_tests_passed_run(
         elif filename.endswith(const.CONTAINER_NAMING):
             data = parse_json_file(file)
             if data:
-                container_start_ms = _safe_int(data.get(const.START_RUN_KEY))
-                container_stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
+                container_start = _safe_int(data.get(const.START_RUN_KEY))
+                container_stop = _safe_int(data.get(const.STOP_RUN_KEY))
+                if container_start is not None:
+                    container_start_times.append(container_start)
+                if container_stop is not None:
+                    container_stop_times.append(container_stop)
+
+    if container_start_times:
+        container_start_ms = min(container_start_times)
+    if container_stop_times:
+        container_stop_ms = max(container_stop_times)
 
     if container_start_ms is None and result_start_times:
         container_start_ms = min(result_start_times)
@@ -805,9 +949,10 @@ def generate_and_upload_report(run_name: str) -> None:
     try:
         logger.info("Начало скачивания файлов из MinIO")
         download_allure_results(run_name, temp_dir)
+        results_dir_for_generation = _resolve_allure_results_dir(temp_dir)
 
         logger.info("Начало генерации allure-report")
-        generate_allure_report(temp_dir, report_dir)
+        generate_allure_report(results_dir_for_generation, report_dir)
 
         logger.info("Загрузка allure-report в MinIO")
         upload_report_to_minio(run_name, report_dir)
@@ -815,6 +960,53 @@ def generate_and_upload_report(run_name: str) -> None:
     finally:
         logger.info("Очистка временных директорий")
         cleanup_temporary_directories([temp_dir, report_dir])
+
+
+def _resolve_allure_results_dir(base_dir: str) -> str:
+    """
+    Находит директорию с allure results.
+    """
+    def _is_allure_payload_name(name: str) -> bool:
+        return name.endswith(const.RESULT_NAMING) or name.endswith(
+            const.CONTAINER_NAMING
+        )
+
+    base_result_files = [
+        name
+        for name in os.listdir(base_dir)
+        if os.path.isfile(os.path.join(base_dir, name))
+        and _is_allure_payload_name(name)
+    ]
+    if base_result_files:
+        return base_dir
+
+    directories_with_results: set[str] = set()
+    for root, _, files in os.walk(base_dir):
+        for name in files:
+            if _is_allure_payload_name(name):
+                directories_with_results.add(root)
+                break
+
+    if len(directories_with_results) == 1:
+        resolved_dir = next(iter(directories_with_results))
+        logger.info(
+            "Определена вложенная директория allure-results для генерации",
+            base_dir=base_dir,
+            resolved_dir=resolved_dir,
+        )
+        return resolved_dir
+
+    if not directories_with_results:
+        raise RuntimeError(
+            "После распаковки архива не найдены файлы результатов Allure "
+            "(*-result.json или *-container.json)."
+        )
+
+    raise RuntimeError(
+        "После распаковки обнаружено несколько директорий с файлами Allure "
+        "(*-result.json/*-container.json); "
+        "невозможно однозначно выбрать источник для генерации отчета."
+    )
 
 
 def download_allure_results(
@@ -826,6 +1018,34 @@ def download_allure_results(
     allure_results_directory - директория в MinIO с allure-results.
     destination_dir - путь к локальной директории для сохранения allure-results.
     """
+    archive_object_name = (
+        f"{allure_results_directory}/{const.ALLURE_RESULTS_ARCHIVE_NAME}"
+    )
+
+    # Формат хранения: один tar.gz на прогон.
+    try:
+        minio_client.stat_object(const.ALLURE_RESULTS_BUCKET_NAME, archive_object_name)
+        archive_local_path = os.path.join(
+            destination_dir, const.ALLURE_RESULTS_ARCHIVE_NAME
+        )
+        minio_client.download_file(
+            const.ALLURE_RESULTS_BUCKET_NAME, archive_object_name, archive_local_path
+        )
+        with open(archive_local_path, "rb") as archive_file:
+            _safe_extract_tar_gz_bytes(archive_file.read(), destination_dir)
+        try:
+            os.remove(archive_local_path)
+        except OSError:
+            logger.warning("Не удалось удалить временный архив %s", archive_local_path)
+        logger.info("Архив allure-results распакован", object=archive_object_name)
+        return
+    except S3Error:
+        logger.info(
+            "Архив allure-results.tar.gz не найден, fallback на legacy-структуру",
+            run_name=allure_results_directory,
+        )
+
+    # Legacy fallback: старые прогоны с набором отдельных файлов.
     for obj in minio_client.list_objects(
         const.ALLURE_RESULTS_BUCKET_NAME, prefix=f"{allure_results_directory}/"
     ):
