@@ -455,6 +455,8 @@ def check_all_tests_passed_run(
 
     result_start_times: list[int] = []
     result_stop_times: list[int] = []
+    container_start_times: list[int] = []
+    container_stop_times: list[int] = []
     container_start_ms: Optional[int] = None
     container_stop_ms: Optional[int] = None
 
@@ -495,8 +497,12 @@ def check_all_tests_passed_run(
                     if stop_ms is not None:
                         result_stop_times.append(stop_ms)
                 elif entry_name.endswith(const.CONTAINER_NAMING):
-                    container_start_ms = _safe_int(data.get(const.START_RUN_KEY))
-                    container_stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
+                    container_start = _safe_int(data.get(const.START_RUN_KEY))
+                    container_stop = _safe_int(data.get(const.STOP_RUN_KEY))
+                    if container_start is not None:
+                        container_start_times.append(container_start)
+                    if container_stop is not None:
+                        container_stop_times.append(container_stop)
 
         elif filename.endswith(const.RESULT_NAMING):
             data = parse_json_file(file)
@@ -529,8 +535,17 @@ def check_all_tests_passed_run(
         elif filename.endswith(const.CONTAINER_NAMING):
             data = parse_json_file(file)
             if data:
-                container_start_ms = _safe_int(data.get(const.START_RUN_KEY))
-                container_stop_ms = _safe_int(data.get(const.STOP_RUN_KEY))
+                container_start = _safe_int(data.get(const.START_RUN_KEY))
+                container_stop = _safe_int(data.get(const.STOP_RUN_KEY))
+                if container_start is not None:
+                    container_start_times.append(container_start)
+                if container_stop is not None:
+                    container_stop_times.append(container_stop)
+
+    if container_start_times:
+        container_start_ms = min(container_start_times)
+    if container_stop_times:
+        container_stop_ms = max(container_stop_times)
 
     if container_start_ms is None and result_start_times:
         container_start_ms = min(result_start_times)
@@ -934,9 +949,10 @@ def generate_and_upload_report(run_name: str) -> None:
     try:
         logger.info("Начало скачивания файлов из MinIO")
         download_allure_results(run_name, temp_dir)
+        results_dir_for_generation = _resolve_allure_results_dir(temp_dir)
 
         logger.info("Начало генерации allure-report")
-        generate_allure_report(temp_dir, report_dir)
+        generate_allure_report(results_dir_for_generation, report_dir)
 
         logger.info("Загрузка allure-report в MinIO")
         upload_report_to_minio(run_name, report_dir)
@@ -944,6 +960,53 @@ def generate_and_upload_report(run_name: str) -> None:
     finally:
         logger.info("Очистка временных директорий")
         cleanup_temporary_directories([temp_dir, report_dir])
+
+
+def _resolve_allure_results_dir(base_dir: str) -> str:
+    """
+    Находит директорию с allure results.
+    """
+    def _is_allure_payload_name(name: str) -> bool:
+        return name.endswith(const.RESULT_NAMING) or name.endswith(
+            const.CONTAINER_NAMING
+        )
+
+    base_result_files = [
+        name
+        for name in os.listdir(base_dir)
+        if os.path.isfile(os.path.join(base_dir, name))
+        and _is_allure_payload_name(name)
+    ]
+    if base_result_files:
+        return base_dir
+
+    directories_with_results: set[str] = set()
+    for root, _, files in os.walk(base_dir):
+        for name in files:
+            if _is_allure_payload_name(name):
+                directories_with_results.add(root)
+                break
+
+    if len(directories_with_results) == 1:
+        resolved_dir = next(iter(directories_with_results))
+        logger.info(
+            "Определена вложенная директория allure-results для генерации",
+            base_dir=base_dir,
+            resolved_dir=resolved_dir,
+        )
+        return resolved_dir
+
+    if not directories_with_results:
+        raise RuntimeError(
+            "После распаковки архива не найдены файлы результатов Allure "
+            "(*-result.json или *-container.json)."
+        )
+
+    raise RuntimeError(
+        "После распаковки обнаружено несколько директорий с файлами Allure "
+        "(*-result.json/*-container.json); "
+        "невозможно однозначно выбрать источник для генерации отчета."
+    )
 
 
 def download_allure_results(
