@@ -40,7 +40,7 @@ def is_gzip_payload(data: bytes) -> bool:
     """
     if len(data) < const.GZIP_HEADER_SIZE:
         return False
-    header = data[:const.GZIP_HEADER_SIZE]
+    header = data[: const.GZIP_HEADER_SIZE]
     return header == const.GZIP_MAGIC
 
 
@@ -70,9 +70,8 @@ def _unsafe_special_file_error_message(member_name: str) -> str:
 def is_allure_payload_filename(name: str) -> bool:
     """Проверяет, что имя файла соответствует allure result/container."""
     basename = os.path.basename(name.replace("\\", "/"))
-    return (
-        basename.endswith(const.RESULT_NAMING)
-        or basename.endswith(const.CONTAINER_NAMING)
+    return basename.endswith(const.RESULT_NAMING) or basename.endswith(
+        const.CONTAINER_NAMING
     )
 
 
@@ -138,9 +137,7 @@ def _validate_payload_directory_layout(payload_paths: Sequence[str]) -> None:
         path for path in payload_paths if "/" not in path and "\\" not in path
     ]
     if root_payload_files:
-        nested_paths = [
-            path for path in payload_paths if "/" in path or "\\" in path
-        ]
+        nested_paths = [path for path in payload_paths if "/" in path or "\\" in path]
         if nested_paths:
             raise UploadValidationError(
                 "Архив содержит файлы allure-results в корне и во вложенных "
@@ -223,7 +220,9 @@ def validate_tar_gz_archive(archive_bytes: bytes) -> TarArchiveInfo:
     """Полная валидация архива allure-results до записи в БД/MinIO."""
     tar = open_validated_tar_gz(archive_bytes)
     try:
-        validation_root = os.path.abspath(os.path.join(os.getcwd(), ".archive_validation"))
+        validation_root = os.path.abspath(
+            os.path.join(os.getcwd(), ".archive_validation")
+        )
         _reject_unsafe_tar_members(tar, validation_root)
         payload_paths = _collect_payload_paths(tar)
         _validate_payload_directory_layout(payload_paths)

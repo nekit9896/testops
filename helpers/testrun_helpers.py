@@ -20,13 +20,11 @@ from app import db
 from app.clients import MinioClient
 from app.models import TestResult
 from helpers.allure_utils import extract_stand_from_environment_file
-from helpers.archive_utils import (
-    UploadValidationError,
-    is_allure_payload_filename,
-    open_validated_tar_gz,
-    safe_extract_tar_gz_bytes,
-    validate_tar_gz_archive,
-)
+from helpers.archive_utils import (UploadValidationError,
+                                   is_allure_payload_filename,
+                                   open_validated_tar_gz,
+                                   safe_extract_tar_gz_bytes,
+                                   validate_tar_gz_archive)
 from logger import init_logger
 
 RunStatusSignal = Literal["none", "fail", "broken"]
@@ -193,7 +191,10 @@ def _extract_stand_from_archive(archive_bytes: bytes) -> Optional[str]:
         for member in tar.getmembers():
             if not member.isfile():
                 continue
-            if os.path.basename(member.name.replace("\\", "/")) != "environment.properties":
+            if (
+                os.path.basename(member.name.replace("\\", "/"))
+                != "environment.properties"
+            ):
                 continue
             fileobj = tar.extractfile(member)
             if not fileobj:
@@ -508,7 +509,9 @@ def check_all_tests_passed_run(
 
             for entry_name, data in archive_entries:
                 if not data:
-                    status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
+                    status_signal = _merge_status_signals(
+                        status_signal, const.STATUS_FAIL
+                    )
                     continue
                 has_valid_payload_data = True
                 if entry_name.endswith(const.RESULT_NAMING):
@@ -1009,6 +1012,7 @@ def _resolve_allure_results_dir(base_dir: str) -> str:
     """
     Находит директорию с allure results.
     """
+
     def _is_allure_payload_name(name: str) -> bool:
         return name.endswith(const.RESULT_NAMING) or name.endswith(
             const.CONTAINER_NAMING

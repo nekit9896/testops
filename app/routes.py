@@ -55,13 +55,16 @@ def upload_results():
             error_code=exc.code,
             message=exc.message,
         )
-        return flask.jsonify(
-            {
-                "success": False,
-                "error": exc.code,
-                "message": exc.message,
-            }
-        ), 400
+        return (
+            flask.jsonify(
+                {
+                    "success": False,
+                    "error": exc.code,
+                    "message": exc.message,
+                }
+            ),
+            400,
+        )
 
     new_result = testrun_helpers.create_temp_test_result()
     test_run_info = testrun_helpers.extract_test_run_info(files)
