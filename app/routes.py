@@ -47,6 +47,22 @@ def upload_results():
     files = testrun_helpers.get_request_files()
     testrun_helpers.check_files_size(files)
 
+    try:
+        testrun_helpers.validate_upload_files(files)
+    except testrun_helpers.UploadValidationError as exc:
+        logger.warning(
+            "Валидация загружаемых файлов не пройдена",
+            error_code=exc.code,
+            message=exc.message,
+        )
+        return flask.jsonify(
+            {
+                "success": False,
+                "error": exc.code,
+                "message": exc.message,
+            }
+        ), 400
+
     new_result = testrun_helpers.create_temp_test_result()
     test_run_info = testrun_helpers.extract_test_run_info(files)
 
@@ -72,7 +88,11 @@ def upload_results():
     testrun_helpers.get_or_generate_report(testrun.run_name)
 
     response = flask.jsonify(
-        {"run_id": new_result.id, "message": "Файлы успешно загружены"}
+        {
+            "success": True,
+            "run_id": new_result.id,
+            "message": "Файлы успешно загружены",
+        }
     )
     response_code = 201
     logger.info("Файлы успешно загружены", status_code=response_code)

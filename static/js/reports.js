@@ -663,6 +663,8 @@ class ReportsPage {
             statusStyle = "color:#f97316;";
           } else if (statusValue === "skipped") {
             statusClass = "text-gray-500";
+          } else if (statusValue === "no_data") {
+            statusClass = "text-gray-400";
           }
 
           const id = this.escapeHtml(item.id ?? "-");
