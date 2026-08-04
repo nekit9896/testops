@@ -19,7 +19,8 @@ import structlog
 from flask import has_request_context, request
 from structlog.processors import CallsiteParameter
 
-from constants import LOG_DIR, LOG_FILE_NAME, LOG_LEVEL, LOG_MAX_BYTES, LOG_BACKUP_COUNT
+from constants import (LOG_BACKUP_COUNT, LOG_DIR, LOG_FILE_NAME, LOG_LEVEL,
+                       LOG_MAX_BYTES)
 
 
 # ---------------------------------------------------
@@ -100,9 +101,7 @@ def _configure_stdlib_logging() -> None:
     if LOG_DIR:
         os.makedirs(LOG_DIR, exist_ok=True)
         log_path: str = os.path.join(LOG_DIR, LOG_FILE_NAME)
-        has_file = any(
-            isinstance(h, RotatingFileHandler) for h in root.handlers
-        )
+        has_file = any(isinstance(h, RotatingFileHandler) for h in root.handlers)
         if not has_file:
             file_handler = RotatingFileHandler(
                 filename=log_path,
@@ -126,7 +125,7 @@ _logger_configured: bool = False
 def setup_logger() -> None:
     """
     Настраивает structlog + stdlib logging.
-    Вызывается один раз при импорте модуля. 
+    Вызывается один раз при импорте модуля.
     """
     global _logger_configured
     if _logger_configured:

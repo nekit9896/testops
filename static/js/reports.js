@@ -499,7 +499,7 @@ class ReportsPage {
         if (this.tableBody) {
           this.tableBody.innerHTML = `
             <tr>
-              <td colspan="7" class="px-4 py-6 text-center text-sm text-red-600">
+              <td colspan="5" class="px-4 py-6 text-center text-sm text-red-600">
                 ${errorText}
               </td>
             </tr>`;
@@ -639,7 +639,7 @@ class ReportsPage {
   
         this.tableBody.innerHTML = `
           <tr>
-            <td colspan="7" class="px-4 py-6 text-center text-sm text-gray-500">
+            <td colspan="5" class="px-4 py-6 text-center text-sm text-gray-500">
               ${emptyText}
             </td>
           </tr>`;
@@ -663,10 +663,11 @@ class ReportsPage {
             statusStyle = "color:#f97316;";
           } else if (statusValue === "skipped") {
             statusClass = "text-gray-500";
+          } else if (statusValue === "no_data") {
+            statusClass = "text-gray-400";
           }
 
           const id = this.escapeHtml(item.id ?? "-");
-          const runName = this.escapeHtml(item.run_name || "-");
           const startDate = this.escapeHtml(this.formatLocalDate(item.start_date));
           const endDate = this.escapeHtml(this.formatLocalDate(item.end_date));
           const stand = this.escapeHtml(item.stand || "-");
@@ -674,13 +675,15 @@ class ReportsPage {
 
           return (
             '<tr class="hover:bg-gray-50">' +
-              `<td class="px-4 py-2 text-sm text-gray-900">${id}</td>` +
-              `<td class="px-4 py-2 text-sm text-gray-900">${runName}</td>` +
+              `<td class="px-4 py-2 text-sm">` +
+                `<a href="/reports/${id}" class="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">` +
+                  `Запуск #${id}` +
+                `</a>` +
+              `</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${endDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${stand}</td>` +
               `<td class="px-4 py-2 text-sm font-semibold ${statusClass}" style="${statusStyle}">${status}</td>` +
-              `<td class="px-4 py-2 text-sm"><a href="/reports/${id}" class="text-blue-600 hover:underline" target="_blank" rel="noopener noreferrer">Открыть</a></td>` +
             "</tr>"
           );
         })

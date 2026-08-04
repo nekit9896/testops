@@ -16,6 +16,13 @@ ALLURE_REPORT_NAME = "index.html"
 ALLURE_RESULTS_ARCHIVE_NAME = "allure-results.tar.gz"
 ALLURE_RESULTS_ARCHIVE_SUFFIX = ".tar.gz"
 
+# Gzip: сигнатура в начале файла (magic bytes) — первые байты, по которым
+# распознаётся формат. Для gzip это 0x1F 0x8B (стандарт RFC 1952).
+GZIP_MAGIC_BYTE_1 = 0x1F
+GZIP_MAGIC_BYTE_2 = 0x8B
+GZIP_HEADER_SIZE = 2
+GZIP_MAGIC = bytes([GZIP_MAGIC_BYTE_1, GZIP_MAGIC_BYTE_2])
+
 # Logging
 LOG_FILE_NAME: str = "app.log"
 LOG_DIR: str = os.getenv("LOG_DIR", "")  # пустая строка = только stdout, без файла
@@ -52,6 +59,7 @@ STATUS_FAIL = "fail"
 STATUS_BROKEN = "broken"
 STATUS_SKIPPED = "skipped"
 STATUS_DESELECTED = "deselected"
+STATUS_NO_DATA = "no_data"
 ENCODING = "utf-8"
 RESULT_NAMING = "result.json"
 CONTAINER_NAMING = "container.json"

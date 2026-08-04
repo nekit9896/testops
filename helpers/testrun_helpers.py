@@ -4,7 +4,6 @@ import json
 import os
 import shutil
 import subprocess
-import tarfile
 import tempfile
 from typing import Any, Dict, List, Literal, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
@@ -21,12 +20,61 @@ from app import db
 from app.clients import MinioClient
 from app.models import TestResult
 from helpers.allure_utils import extract_stand_from_environment_file
+from helpers.archive_utils import (UploadValidationError,
+                                   is_allure_payload_filename,
+                                   open_validated_tar_gz,
+                                   safe_extract_tar_gz_bytes,
+                                   validate_tar_gz_archive)
 from logger import init_logger
 
 RunStatusSignal = Literal["none", "fail", "broken"]
 
 minio_client = MinioClient()
 logger = init_logger()
+
+
+def validate_upload_files(files: Sequence[FileStorage]) -> None:
+    """
+    Валидирует загружаемые файлы до создания записей в БД и загрузки в MinIO.
+    """
+    archive_filenames: list[str] = []
+    loose_payload_count = 0
+
+    for file in files:
+        filename = file.filename or ""
+        if not allowed_file(filename):
+            raise UploadValidationError(
+                f"Недопустимый файл: {filename}",
+                code="invalid_file_type",
+            )
+
+        file_content = _read_file_content(file)
+        file.seek(0)
+
+        if _is_allure_results_archive(filename):
+            validate_tar_gz_archive(file_content)
+            archive_filenames.append(filename)
+        elif is_allure_payload_filename(filename):
+            loose_payload_count += 1
+
+    if archive_filenames:
+        if len(archive_filenames) > 1:
+            raise UploadValidationError(
+                "Ожидается один архив allure-results.tar.gz.",
+                code="multiple_archives",
+            )
+        if len(files) > len(archive_filenames):
+            raise UploadValidationError(
+                "Смешанная загрузка архива и отдельных файлов не поддерживается.",
+                code="mixed_upload",
+            )
+        return
+
+    if loose_payload_count == 0:
+        raise UploadValidationError(
+            "Не найдены файлы allure-results (*-result.json или *-container.json).",
+            code="missing_allure_results",
+        )
 
 
 def get_request_files() -> List[FileStorage]:
@@ -136,39 +184,25 @@ def _is_allure_results_archive(filename: str) -> bool:
     return filename.lower().endswith(const.ALLURE_RESULTS_ARCHIVE_SUFFIX)
 
 
-def _safe_extract_tar_gz_bytes(archive_bytes: bytes, destination_dir: str) -> None:
-    """
-    Безопасно распаковывает tar.gz, блокируя path traversal.
-    """
-    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
-        abs_destination = os.path.abspath(destination_dir)
-        for member in tar.getmembers():
-            member_target = os.path.abspath(os.path.join(destination_dir, member.name))
-            if not member_target.startswith(abs_destination + os.sep) and (
-                member_target != abs_destination
-            ):
-                raise ValueError(f"Небезопасный путь в архиве: {member.name}")
-        tar.extractall(destination_dir)
-
-
 def _extract_stand_from_archive(archive_bytes: bytes) -> Optional[str]:
-    """
-    Извлекает stand из environment.properties внутри tar.gz архива.
-    """
+    """Извлекает stand из environment.properties внутри tar.gz архива."""
+    tar = open_validated_tar_gz(archive_bytes)
     try:
-        with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
-            for member in tar.getmembers():
-                if not member.isfile():
-                    continue
-                if os.path.basename(member.name) != "environment.properties":
-                    continue
-                fileobj = tar.extractfile(member)
-                if not fileobj:
-                    continue
-                raw = fileobj.read()
-                return _extract_stand_value("environment.properties", raw)
-    except tarfile.TarError:
-        logger.exception("Не удалось разобрать архив для извлечения stand")
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            if (
+                os.path.basename(member.name.replace("\\", "/"))
+                != "environment.properties"
+            ):
+                continue
+            fileobj = tar.extractfile(member)
+            if not fileobj:
+                continue
+            raw = fileobj.read()
+            return _extract_stand_value("environment.properties", raw)
+    finally:
+        tar.close()
     return None
 
 
@@ -226,11 +260,12 @@ def _read_allure_json_from_archive(file: FileStorage) -> list[tuple[str, dict]]:
         raise ValueError("Архив пустой.")
 
     collected: list[tuple[str, dict]] = []
-    with tarfile.open(fileobj=io.BytesIO(archive_bytes), mode="r:gz") as tar:
+    tar = open_validated_tar_gz(archive_bytes)
+    try:
         for member in tar.getmembers():
             if not member.isfile():
                 continue
-            basename = os.path.basename(member.name)
+            basename = os.path.basename(member.name.replace("\\", "/"))
             if not (
                 basename.endswith(const.RESULT_NAMING)
                 or basename.endswith(const.CONTAINER_NAMING)
@@ -247,6 +282,8 @@ def _read_allure_json_from_archive(file: FileStorage) -> list[tuple[str, dict]]:
                 collected.append((basename, {}))
                 continue
             collected.append((basename, parsed))
+    finally:
+        tar.close()
     return collected
 
 
@@ -451,6 +488,8 @@ def check_all_tests_passed_run(
     status_signal: RunStatusSignal = "none"
     has_non_skipped_status = False
     has_skipped_like_status = False
+    has_payload_entries = False
+    has_valid_payload_data = False
     logger.info("Проверка статусов автотестов внутри данного отчета")
 
     result_start_times: list[int] = []
@@ -463,19 +502,18 @@ def check_all_tests_passed_run(
     for file in files:
         filename = getattr(file, "filename", "") or ""
         if _is_allure_results_archive(filename):
-            try:
-                archive_entries = _read_allure_json_from_archive(file)
-            except (tarfile.TarError, ValueError) as archive_error:
-                logger.warning(
-                    "Не удалось разобрать архив %s: %s", filename, archive_error
-                )
-                status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
-                continue
+            archive_entries = _read_allure_json_from_archive(file)
+
+            if archive_entries:
+                has_payload_entries = True
 
             for entry_name, data in archive_entries:
                 if not data:
-                    status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
+                    status_signal = _merge_status_signals(
+                        status_signal, const.STATUS_FAIL
+                    )
                     continue
+                has_valid_payload_data = True
                 if entry_name.endswith(const.RESULT_NAMING):
                     # Итоговый статус прогона считаем только по статусам тест-кейсов.
                     file_status_signal = _status_signal_from_value(
@@ -505,12 +543,14 @@ def check_all_tests_passed_run(
                         container_stop_times.append(container_stop)
 
         elif filename.endswith(const.RESULT_NAMING):
+            has_payload_entries = True
             data = parse_json_file(file)
 
             if not data:
                 status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
+                has_valid_payload_data = True
                 file_status_signal = _status_signal_from_value(
                     data.get(const.STATUS_KEY)
                 )
@@ -533,8 +573,10 @@ def check_all_tests_passed_run(
                     result_stop_times.append(stop_ms)
 
         elif filename.endswith(const.CONTAINER_NAMING):
+            has_payload_entries = True
             data = parse_json_file(file)
             if data:
+                has_valid_payload_data = True
                 container_start = _safe_int(data.get(const.START_RUN_KEY))
                 container_stop = _safe_int(data.get(const.STOP_RUN_KEY))
                 if container_start is not None:
@@ -557,13 +599,17 @@ def check_all_tests_passed_run(
     )
     stop_time_str = format_timestamp(container_stop_ms) if container_stop_ms else None
 
-    status = _run_status_from_signal(status_signal)
-    if (
+    if not has_payload_entries or not has_valid_payload_data:
+        if status_signal == "none":
+            status = const.STATUS_NO_DATA
+    elif (
         status_signal == "none"
         and has_skipped_like_status
         and not has_non_skipped_status
     ):
         status = const.STATUS_SKIPPED
+    else:
+        status = _run_status_from_signal(status_signal)
 
     logger.info(
         "Итоговый статус тестов: %s, start=%s, stop=%s",
@@ -966,6 +1012,7 @@ def _resolve_allure_results_dir(base_dir: str) -> str:
     """
     Находит директорию с allure results.
     """
+
     def _is_allure_payload_name(name: str) -> bool:
         return name.endswith(const.RESULT_NAMING) or name.endswith(
             const.CONTAINER_NAMING
@@ -1032,7 +1079,7 @@ def download_allure_results(
             const.ALLURE_RESULTS_BUCKET_NAME, archive_object_name, archive_local_path
         )
         with open(archive_local_path, "rb") as archive_file:
-            _safe_extract_tar_gz_bytes(archive_file.read(), destination_dir)
+            safe_extract_tar_gz_bytes(archive_file.read(), destination_dir)
         try:
             os.remove(archive_local_path)
         except OSError:
