@@ -37,6 +37,10 @@ class TestResult(db.Model):
     end_date = db.Column(db.DateTime, nullable=True)
     stand = db.Column(db.String(128), nullable=True, index=True)
     status = db.Column(db.String(50), nullable=False)
+    passed_count = db.Column(db.Integer, nullable=True)
+    failed_count = db.Column(db.Integer, nullable=True)
+    broken_count = db.Column(db.Integer, nullable=True)
+    skipped_count = db.Column(db.Integer, nullable=True)
     created_at = db.Column(db.DateTime, default=sqlalchemy.func.now(), nullable=False)
     is_deleted = db.Column(db.Boolean, default=False)
 
