@@ -5,7 +5,7 @@
  *  - управляет кнопками и сообщениями об ошибках
  */
 
-/** Статусы прогонов и тест-кейсов (синхронизированы с constants.py на бэкенде). */
+/** Статусы прогонов и тест-кейсов. */
 const TEST_STATUS = {
   PASSED: "passed",
   FAILED: "failed",
@@ -14,6 +14,13 @@ const TEST_STATUS = {
   NO_DATA: "no_data",
   PENDING: "pending",
   LEGACY_FAIL: "fail",
+};
+
+const STATUS_BAR_COLORS = {
+  [TEST_STATUS.PASSED]: "#22c55e",
+  [TEST_STATUS.FAILED]: "#ef4444",
+  [TEST_STATUS.BROKEN]: "#f97316",
+  [TEST_STATUS.SKIPPED]: "#9ca3af",
 };
 
 class ReportsPage {
@@ -680,10 +687,10 @@ class ReportsPage {
      */
     renderStatusBar(stats) {
       const segments = [
-        { key: TEST_STATUS.PASSED, count: stats.passed || 0, colorClass: "bg-green-500", label: TEST_STATUS.PASSED },
-        { key: TEST_STATUS.FAILED, count: stats.failed || 0, colorClass: "bg-red-500", label: TEST_STATUS.FAILED },
-        { key: TEST_STATUS.BROKEN, count: stats.broken || 0, colorClass: "bg-orange-500", label: TEST_STATUS.BROKEN },
-        { key: TEST_STATUS.SKIPPED, count: stats.skipped || 0, colorClass: "bg-gray-400", label: TEST_STATUS.SKIPPED },
+        { key: TEST_STATUS.PASSED, count: stats.passed || 0, label: TEST_STATUS.PASSED },
+        { key: TEST_STATUS.FAILED, count: stats.failed || 0, label: TEST_STATUS.FAILED },
+        { key: TEST_STATUS.BROKEN, count: stats.broken || 0, label: TEST_STATUS.BROKEN },
+        { key: TEST_STATUS.SKIPPED, count: stats.skipped || 0, label: TEST_STATUS.SKIPPED },
       ].filter((segment) => segment.count > 0);
 
       const totalCount = stats.total || segments.reduce((sum, segment) => sum + segment.count, 0);
@@ -697,12 +704,14 @@ class ReportsPage {
           const share = totalCount > 0 ? segment.count / totalCount : 0;
           const showLabel = share >= 0.08;
           const title = `${segment.label}: ${segment.count}`;
+          const backgroundColor = STATUS_BAR_COLORS[segment.key] || STATUS_BAR_COLORS[TEST_STATUS.FAILED];
           const labelHtml = showLabel
             ? `<span class="${labelClass} leading-none">${this.escapeHtml(String(segment.count))}</span>`
             : "";
           return (
-            `<div class="flex items-center justify-center min-w-0 text-white font-semibold ${segment.colorClass}" ` +
-              `style="flex:${segment.count}" title="${this.escapeHtml(title)}">` +
+            `<div class="flex items-center justify-center min-w-0 text-white font-semibold" ` +
+              `style="flex:${segment.count};background-color:${backgroundColor}" ` +
+              `title="${this.escapeHtml(title)}">` +
               labelHtml +
             `</div>`
           );
@@ -710,7 +719,7 @@ class ReportsPage {
         .join("");
 
       return (
-        `<div class="flex h-6 min-w-[180px] w-full rounded overflow-hidden" role="img" ` +
+        `<div class="flex h-6 w-full rounded overflow-hidden" role="img" ` +
           `aria-label="${this.escapeHtml(ariaLabel)}">` +
           segmentHtml +
         `</div>`
@@ -785,7 +794,7 @@ class ReportsPage {
               `<td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${endDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${stand}</td>` +
-              `<td class="px-4 py-2 text-sm min-w-[200px]">${statusCell}</td>` +
+              `<td class="px-4 py-2 text-sm w-full">${statusCell}</td>` +
             "</tr>"
           );
         })
