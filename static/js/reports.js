@@ -4,6 +4,25 @@
  *  - рисует строки таблицы
  *  - управляет кнопками и сообщениями об ошибках
  */
+
+/** Статусы прогонов и тест-кейсов. */
+const TEST_STATUS = {
+  PASSED: "passed",
+  FAILED: "failed",
+  BROKEN: "broken",
+  SKIPPED: "skipped",
+  NO_DATA: "no_data",
+  PENDING: "pending",
+  LEGACY_FAIL: "fail",
+};
+
+const STATUS_BAR_COLORS = {
+  [TEST_STATUS.PASSED]: "#97cc64",
+  [TEST_STATUS.FAILED]: "#fe5b3c",
+  [TEST_STATUS.BROKEN]: "#fecf4b",
+  [TEST_STATUS.SKIPPED]: "#ababab",
+};
+
 class ReportsPage {
     constructor({ dataUrl, limit }) {
       // REST endpoint и лимит записей берутся из data-атрибутов шаблона
@@ -18,17 +37,14 @@ class ReportsPage {
       // Конфигурация фильтров: какое имя параметра в query и какой ключ в ответе содержит значения.
       this.filterConfig = {
         stand: { param: "stand", responseKey: "stands" },
-        status: { param: "status", responseKey: "statuses" },
       };
       // Выбранные пользователем значения фильтров
       this.filters = {
         stand: [],
-        status: [],
       };
       // Доступные значения фильтров, приходящие с сервера
       this.availableFilters = {
         stand: [],
-        status: [],
       };
   
       // Фильтры по дате
@@ -472,7 +488,7 @@ class ReportsPage {
      *   prev_cursor: string|null,
      *   has_next: boolean,
      *   has_prev: boolean,
-     *   filters: { stands: [...], statuses: [...] }
+     *   filters: { stands: [...] }
      * }
      *
      * @param {Object} [options] - Опции загрузки.
@@ -619,7 +635,138 @@ class ReportsPage {
         control.counter.classList.toggle("hidden", count === 0);
       });
     }
-  
+
+    /**
+     * Возвращает CSS-класс размера текста для счётчика внутри сегмента шкалы.
+     */
+    getStatusBarLabelClass(totalCount) {
+      if (totalCount >= 1000) {
+        return "text-[10px]";
+      }
+      if (totalCount >= 100) {
+        return "text-[11px]";
+      }
+      return "text-xs";
+    }
+
+    /**
+     * Возвращает стили текста для legacy-статуса.
+     */
+    getLegacyStatusPresentation(statusValue) {
+      let statusClass = "text-gray-800";
+      let statusStyle = "";
+      if (statusValue === TEST_STATUS.FAILED || statusValue === TEST_STATUS.LEGACY_FAIL) {
+        statusClass = "text-red-600";
+      } else if (statusValue === TEST_STATUS.PASSED) {
+        statusClass = "text-green-600";
+      } else if (statusValue === TEST_STATUS.BROKEN) {
+        statusClass = "";
+        statusStyle = "color:#f97316;";
+      } else if (statusValue === TEST_STATUS.SKIPPED) {
+        statusClass = "text-gray-500";
+      } else if (statusValue === TEST_STATUS.NO_DATA) {
+        statusClass = "text-gray-400";
+      }
+      return { statusClass, statusStyle };
+    }
+
+    /**
+     * Рендерит ссылку на отчёт запуска.
+     */
+    renderReportLink(id, innerHtml, { linkClass = "text-blue-600 hover:underline", ariaLabel = "" } = {}) {
+      const safeId = this.escapeHtml(id ?? "-");
+      const label = ariaLabel
+        ? this.escapeHtml(ariaLabel)
+        : `Открыть отчёт запуска #${safeId}`;
+      return (
+        `<a href="/reports/${safeId}" class="${linkClass}" target="_blank" rel="noopener noreferrer" ` +
+          `aria-label="${label}">` +
+          innerHtml +
+        `</a>`
+      );
+    }
+
+    /**
+     * Рендерит текстовый статус для legacy-записей без status_stats.
+     */
+    renderLegacyStatusText(item) {
+      const statusValue = String(item.status || "").toLowerCase();
+      const status = this.escapeHtml(item.status || "-");
+      const { statusClass, statusStyle } = this.getLegacyStatusPresentation(statusValue);
+      return (
+        `<span class="font-semibold ${statusClass}" style="${statusStyle}">${status}</span>`
+      );
+    }
+
+    /**
+     * Рендерит цветную шкалу статусов тестов.
+     */
+    renderStatusBar(stats, id) {
+      const segments = [
+        { key: TEST_STATUS.PASSED, count: stats.passed || 0, label: TEST_STATUS.PASSED },
+        { key: TEST_STATUS.FAILED, count: stats.failed || 0, label: TEST_STATUS.FAILED },
+        { key: TEST_STATUS.BROKEN, count: stats.broken || 0, label: TEST_STATUS.BROKEN },
+        { key: TEST_STATUS.SKIPPED, count: stats.skipped || 0, label: TEST_STATUS.SKIPPED },
+      ].filter((segment) => segment.count > 0);
+
+      const totalCount = stats.total || segments.reduce((sum, segment) => sum + segment.count, 0);
+      const labelClass = this.getStatusBarLabelClass(totalCount);
+      const ariaLabel = segments
+        .map((segment) => `${segment.label}: ${segment.count}`)
+        .join(", ");
+
+      const segmentHtml = segments
+        .map((segment) => {
+          const share = totalCount > 0 ? segment.count / totalCount : 0;
+          const showLabel = share >= 0.08;
+          const title = `${segment.label}: ${segment.count}`;
+          const backgroundColor = STATUS_BAR_COLORS[segment.key] || STATUS_BAR_COLORS[TEST_STATUS.FAILED];
+          const labelHtml = showLabel
+            ? `<span class="${labelClass} leading-none">${this.escapeHtml(String(segment.count))}</span>`
+            : "";
+          return (
+            `<div class="flex items-center justify-center min-w-0 text-white font-semibold" ` +
+              `style="flex:${segment.count};background-color:${backgroundColor}" ` +
+              `title="${this.escapeHtml(title)}">` +
+              labelHtml +
+            `</div>`
+          );
+        })
+        .join("");
+
+      const barHtml =
+        `<div class="flex h-6 w-full rounded overflow-hidden" role="img" ` +
+          `aria-label="${this.escapeHtml(ariaLabel)}">` +
+          segmentHtml +
+        `</div>`;
+
+      return this.renderReportLink(id, barHtml, {
+        linkClass: "block no-underline hover:opacity-90",
+        ariaLabel: `Открыть отчёт запуска #${id}`,
+      });
+    }
+
+    /**
+     * Рендерит ячейку статуса: no_data, legacy-текст или шкала.
+     */
+    renderStatusCell(item) {
+      const statusValue = String(item.status || "").toLowerCase();
+
+      if (statusValue === TEST_STATUS.NO_DATA) {
+        return `<span class="text-sm font-semibold text-gray-400">${TEST_STATUS.NO_DATA}</span>`;
+      }
+
+      if (!item.status_stats) {
+        return this.renderLegacyStatusText(item);
+      }
+
+      if (item.status_stats.total === 0) {
+        return `<span class="text-sm font-semibold text-gray-400">${TEST_STATUS.NO_DATA}</span>`;
+      }
+
+      return this.renderStatusBar(item.status_stats, item.id);
+    }
+
     /**
      * Перерисовывает тело таблицы.
      * При пустом списке — показывает сообщение.
@@ -651,27 +798,11 @@ class ReportsPage {
       this.showMessage("", false);
       const rows = items
         .map((item) => {
-          const statusValue = String(item.status || "").toLowerCase();
-          let statusClass = "text-gray-800";
-          let statusStyle = "";
-          if (statusValue === "failed") {
-            statusClass = "text-red-600";
-          } else if (statusValue === "passed") {
-            statusClass = "text-green-600";
-          } else if (statusValue === "broken") {
-            statusClass = "";
-            statusStyle = "color:#f97316;";
-          } else if (statusValue === "skipped") {
-            statusClass = "text-gray-500";
-          } else if (statusValue === "no_data") {
-            statusClass = "text-gray-400";
-          }
-
           const id = this.escapeHtml(item.id ?? "-");
           const startDate = this.escapeHtml(this.formatLocalDate(item.start_date));
           const endDate = this.escapeHtml(this.formatLocalDate(item.end_date));
           const stand = this.escapeHtml(item.stand || "-");
-          const status = this.escapeHtml(item.status || "-");
+          const statusCell = this.renderStatusCell(item);
 
           return (
             '<tr class="hover:bg-gray-50">' +
@@ -683,7 +814,7 @@ class ReportsPage {
               `<td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${endDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${stand}</td>` +
-              `<td class="px-4 py-2 text-sm font-semibold ${statusClass}" style="${statusStyle}">${status}</td>` +
+              `<td class="px-4 py-2 text-sm w-full text-center">${statusCell}</td>` +
             "</tr>"
           );
         })

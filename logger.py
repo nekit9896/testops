@@ -4,7 +4,7 @@
 Принципы:
 - Вывод в stdout в формате JSON (для Docker logs / систем сбора логов).
 - Опциональная запись в файл через RotatingFileHandler (append-only, без read-modify-write).
-- Богатый контекст: timestamp, level, callsite (файл, функция, строка), данные HTTP-запроса, отформатированный traceback.
+- Богатый контекст: timestamp, level, callsite (файл, функция, строка), данные HTTP-запроса, отформатированный traceback
 """
 
 from __future__ import annotations

@@ -130,7 +130,6 @@ def get_reports_data():
     limit = flask.request.args.get("limit", default=const.REPORTS_PAGE_LIMIT, type=int)
     limit = max(1, min(limit, 100))
 
-    statuses = testrun_helpers.extract_filter_values("status")
     stands = testrun_helpers.extract_filter_values("stand")
     start_date_from = flask.request.args.get("start_date_from")
     start_date_to = flask.request.args.get("start_date_to")
@@ -140,7 +139,6 @@ def get_reports_data():
             cursor=cursor,
             limit=limit,
             direction=direction,
-            statuses=statuses,
             stands=stands,
             start_date_from=start_date_from,
             start_date_to=start_date_to,

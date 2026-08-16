@@ -34,9 +34,6 @@ class TarArchiveInfo:
 def is_gzip_payload(data: bytes) -> bool:
     """
     Проверяет, что файл начинается с gzip-сигнатуры (magic bytes).
-
-    Magic bytes — фиксированные первые байты файла, по которым программа
-    определяет формат без полного разбора. Для gzip это два байта 0x1F 0x8B.
     """
     if len(data) < const.GZIP_HEADER_SIZE:
         return False
@@ -46,23 +43,22 @@ def is_gzip_payload(data: bytes) -> bool:
 
 def _unsafe_path_error_message(member_name: str) -> str:
     return (
-        f"Архив не принят: внутри есть файл «{member_name}» с некорректным путём "
-        "(например, ../ или путь вне папки allure-results). "
+        f"Архив не принят: внутри есть файл '{member_name}' с некорректным путём. "
         "Соберите allure-results.tar.gz так, чтобы файлы лежали в одной папке "
-        "без выхода «вверх» по директориям."
+        "без выхода 'вверх' по директориям."
     )
 
 
 def _unsafe_link_error_message(member_name: str) -> str:
     return (
-        f"Архив не принят: внутри есть ссылка «{member_name}». "
+        f"Архив не принят: внутри есть ссылка '{member_name}'. "
         "В архиве должны быть только обычные файлы allure-results, без ссылок."
     )
 
 
 def _unsafe_special_file_error_message(member_name: str) -> str:
     return (
-        f"Архив не принят: внутри есть специальный файл «{member_name}». "
+        f"Архив не принят: внутри есть специальный файл '{member_name}'. "
         "В архиве должны быть только обычные файлы allure-results."
     )
 

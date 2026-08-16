@@ -27,7 +27,7 @@ from helpers.archive_utils import (UploadValidationError,
                                    validate_tar_gz_archive)
 from logger import init_logger
 
-RunStatusSignal = Literal["none", "fail", "broken"]
+RunStatusSignal = Literal["none", "failed", "broken"]
 
 minio_client = MinioClient()
 logger = init_logger()
@@ -305,23 +305,28 @@ def _normalize_status_value(status: Optional[str]) -> Optional[str]:
 def _status_signal_from_value(status: Optional[str]) -> RunStatusSignal:
     """
     Возвращает значимость статуса для итогового прогона:
-    broken > fail > none (passed/skipped/отсутствует).
+    broken > failed > none (passed/skipped/отсутствует).
     """
     normalized = _normalize_status_value(status)
     if normalized is None:
         return "none"
     if normalized == const.STATUS_BROKEN:
         return const.STATUS_BROKEN
-    if normalized in {const.STATUS_FAIL, "failed"}:
-        return const.STATUS_FAIL
+    if normalized in {const.STATUS_FAILED, const.LEGACY_STATUS_FAIL}:
+        return const.STATUS_FAILED
     if normalized in {
-        const.STATUS_PASS,
+        const.STATUS_PASSED,
         const.STATUS_SKIPPED,
         const.STATUS_DESELECTED,
     }:
         return "none"
     # Неизвестные статусы считаем неуспешными, чтобы не показывать ложный "passed".
-    return const.STATUS_FAIL
+    logger.warning(
+        "Неизвестный статус теста при определении итогового прогона, учитываем как failed",
+        status=status,
+        normalized=normalized,
+    )
+    return const.STATUS_FAILED
 
 
 def _merge_status_signals(
@@ -329,8 +334,8 @@ def _merge_status_signals(
 ) -> RunStatusSignal:
     if current == const.STATUS_BROKEN or candidate == const.STATUS_BROKEN:
         return const.STATUS_BROKEN
-    if current == const.STATUS_FAIL or candidate == const.STATUS_FAIL:
-        return const.STATUS_FAIL
+    if current == const.STATUS_FAILED or candidate == const.STATUS_FAILED:
+        return const.STATUS_FAILED
     return "none"
 
 
@@ -376,9 +381,57 @@ def _collect_result_status_signal(data: dict) -> RunStatusSignal:
 def _run_status_from_signal(signal: RunStatusSignal) -> str:
     if signal == const.STATUS_BROKEN:
         return const.STATUS_BROKEN
-    if signal == const.STATUS_FAIL:
-        return const.STATUS_FAIL
-    return const.STATUS_PASS
+    if signal == const.STATUS_FAILED:
+        return const.STATUS_FAILED
+    return const.STATUS_PASSED
+
+
+def _empty_status_stats() -> Dict[str, int]:
+    return {
+        const.STATUS_PASSED: 0,
+        const.STATUS_FAILED: 0,
+        const.STATUS_BROKEN: 0,
+        const.STATUS_SKIPPED: 0,
+        const.STATUS_STATS_TOTAL: 0,
+    }
+
+
+def _status_count_bucket(status: Optional[str]) -> str:
+    """
+    Соотносит статус одного тест-кейса из Allure result.json к bucket для счётчиков шкалы.
+    """
+    normalized = _normalize_status_value(status)
+    if normalized is None:
+        return const.STATUS_FAILED
+    if normalized == const.STATUS_PASSED:
+        return const.STATUS_PASSED
+    if normalized in {const.STATUS_FAILED, const.LEGACY_STATUS_FAIL}:
+        return const.STATUS_FAILED
+    if normalized == const.STATUS_BROKEN:
+        return const.STATUS_BROKEN
+    if normalized in {const.STATUS_SKIPPED, const.STATUS_DESELECTED}:
+        return const.STATUS_SKIPPED
+    logger.warning(
+        "Неизвестный статус теста в Allure result, учитываем как failed",
+        status=status,
+        normalized=normalized,
+    )
+    return const.STATUS_FAILED
+
+
+def _increment_status_count(counts: Dict[str, int], status: Optional[str]) -> None:
+    try:
+        bucket = _status_count_bucket(status)
+        counts[bucket] += 1
+        counts[const.STATUS_STATS_TOTAL] += 1
+    except Exception:
+        logger.warning(
+            "Ошибка при подсчёте статуса теста, учитываем как failed",
+            status=status,
+            exc_info=True,
+        )
+        counts[const.STATUS_FAILED] += 1
+        counts[const.STATUS_STATS_TOTAL] += 1
 
 
 def allowed_file(filename: str) -> bool:
@@ -448,14 +501,14 @@ def format_timestamp(timestamp: int) -> str:
 
 def check_all_tests_passed_run(
     files: Sequence[FileStorage],
-) -> dict[str, Optional[str]]:
+) -> dict[str, Any]:
     """
     Проверяет, прошли ли все автотесты успешно, и возвращает статус,
     а также время начала и окончания выполнения тестов.
 
     Метод анализирует список файлов, содержащих результаты выполнения автотестов,
     и определяет общий статус тестирования по приоритету:
-    'broken' > 'fail' > 'passed'.
+    'broken' > 'failed' > 'passed'.
     Статус 'skipped' не влияет на итоговый статус тестрана.
     Время начала и окончания тестов определяется либо из контейнерного файла,
     если он присутствует, либо из файлов с результатами, если контейнерный файл отсутствует.
@@ -468,7 +521,7 @@ def check_all_tests_passed_run(
     Возвращает:
         dict: Словарь с ключами и значениями:
             - const.STATUS_KEY: Статус выполнения тестов
-              ('passed', 'fail', 'broken' или 'skipped').
+              ('passed', 'failed', 'broken' или 'skipped').
             - const.START_RUN_KEY: Время начала выполнения тестов в строковом формате
               (или None, если время не определено).
             - const.STOP_RUN_KEY: Время окончания выполнения тестов в строковом формате
@@ -490,6 +543,7 @@ def check_all_tests_passed_run(
     has_skipped_like_status = False
     has_payload_entries = False
     has_valid_payload_data = False
+    status_counts = _empty_status_stats()
     logger.info("Проверка статусов автотестов внутри данного отчета")
 
     result_start_times: list[int] = []
@@ -510,12 +564,15 @@ def check_all_tests_passed_run(
             for entry_name, data in archive_entries:
                 if not data:
                     status_signal = _merge_status_signals(
-                        status_signal, const.STATUS_FAIL
+                        status_signal, const.STATUS_FAILED
                     )
+                    if entry_name.endswith(const.RESULT_NAMING):
+                        _increment_status_count(status_counts, const.STATUS_FAILED)
                     continue
                 has_valid_payload_data = True
                 if entry_name.endswith(const.RESULT_NAMING):
                     # Итоговый статус прогона считаем только по статусам тест-кейсов.
+                    _increment_status_count(status_counts, data.get(const.STATUS_KEY))
                     file_status_signal = _status_signal_from_value(
                         data.get(const.STATUS_KEY)
                     )
@@ -547,10 +604,12 @@ def check_all_tests_passed_run(
             data = parse_json_file(file)
 
             if not data:
-                status_signal = _merge_status_signals(status_signal, const.STATUS_FAIL)
+                status_signal = _merge_status_signals(status_signal, const.STATUS_FAILED)
+                _increment_status_count(status_counts, const.STATUS_FAILED)
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
                 has_valid_payload_data = True
+                _increment_status_count(status_counts, data.get(const.STATUS_KEY))
                 file_status_signal = _status_signal_from_value(
                     data.get(const.STATUS_KEY)
                 )
@@ -622,6 +681,7 @@ def check_all_tests_passed_run(
         const.STATUS_KEY: status,
         const.START_RUN_KEY: start_time_str,
         const.STOP_RUN_KEY: stop_time_str,
+        const.STATUS_STATS_KEY: status_counts,
     }
 
 
@@ -681,6 +741,11 @@ def update_test_result(new_result: "TestResult", test_run_info: dict) -> None:
     new_result.status = test_run_info.get(const.STATUS_KEY)
     new_result.start_date = test_run_info.get(const.START_RUN_KEY)
     new_result.end_date = test_run_info.get(const.STOP_RUN_KEY)
+    stats = test_run_info.get(const.STATUS_STATS_KEY) or {}
+    new_result.passed_count = stats.get(const.STATUS_PASSED, 0)
+    new_result.failed_count = stats.get(const.STATUS_FAILED, 0)
+    new_result.broken_count = stats.get(const.STATUS_BROKEN, 0)
+    new_result.skipped_count = stats.get(const.STATUS_SKIPPED, 0)
     db.session.commit()
 
 
@@ -733,6 +798,20 @@ def _format_datetime(value: Optional[datetime.datetime]) -> Optional[str]:
 
 def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
     """Приводит TestResult к словарю для фронтенда."""
+    status_stats = None
+    if result.passed_count is not None:
+        passed = result.passed_count or 0
+        failed = result.failed_count or 0
+        broken = result.broken_count or 0
+        skipped = result.skipped_count or 0
+        status_stats = {
+            const.STATUS_PASSED: passed,
+            const.STATUS_FAILED: failed,
+            const.STATUS_BROKEN: broken,
+            const.STATUS_SKIPPED: skipped,
+            const.STATUS_STATS_TOTAL: passed + failed + broken + skipped,
+        }
+
     return {
         "id": result.id,
         "run_name": result.run_name,
@@ -740,6 +819,7 @@ def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
         "end_date": _format_datetime(result.end_date),
         "stand": result.stand or None,
         "status": result.status,
+        const.STATUS_STATS_KEY: status_stats,
     }
 
 
@@ -827,7 +907,6 @@ def _collect_distinct_column_values(column) -> List[str]:
 def _get_available_report_filters() -> Dict[str, List[str]]:
     """Формирует справочник доступных фильтров для отчётов."""
     return {
-        "statuses": _collect_distinct_column_values(TestResult.status),
         "stands": _collect_distinct_column_values(TestResult.stand),
     }
 
@@ -881,7 +960,6 @@ def fetch_reports(
     cursor: Optional[int],
     limit: int,
     direction: str = "next",
-    statuses: Optional[Sequence[str]] = None,
     stands: Optional[Sequence[str]] = None,
     start_date_from: Optional[str] = None,
     start_date_to: Optional[str] = None,
@@ -889,7 +967,7 @@ def fetch_reports(
     """
     Возвращает страницу отчетов с курсорной пагинацией.
     direction: 'next' (старее) или 'prev' (новее).
-    statuses/stands — списки значений для фильтрации (множество значений).
+    stands - список значений для фильтрации (множество значений).
     start_date_from/start_date_to — фильтр по дате старта (формат YYYY-MM-DD).
     """
     if direction not in {"next", "prev"}:
@@ -905,7 +983,6 @@ def fetch_reports(
         raise ValueError("Дата 'с' должна быть меньше или равна дате 'до'")
 
     available_filters = _get_available_report_filters()
-    normalized_statuses = _normalize_filter_values(statuses)
     normalized_stands = _normalize_filter_values(stands)
 
     base_query = TestResult.query.filter_by(is_deleted=False)
@@ -915,8 +992,6 @@ def fetch_reports(
         else:
             base_query = base_query.filter(TestResult.id > cursor)
 
-    if normalized_statuses:
-        base_query = base_query.filter(TestResult.status.in_(normalized_statuses))
     if normalized_stands:
         base_query = base_query.filter(TestResult.stand.in_(normalized_stands))
 

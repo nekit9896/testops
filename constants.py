@@ -54,12 +54,21 @@ HTML_CONTENT_TYPE = "text/html"
 # Upload files
 STATUS_KEY = "status"
 PENDING_STATUS = "pending"
-STATUS_PASS = "passed"
-STATUS_FAIL = "fail"
+
+# Статусы тест-кейсов в Allure result.json и итоговый статус прогона в TestOps
+STATUS_PASSED = "passed"
+STATUS_FAILED = "failed"
 STATUS_BROKEN = "broken"
 STATUS_SKIPPED = "skipped"
 STATUS_DESELECTED = "deselected"
+
+# Служебные статусы TestOps
 STATUS_NO_DATA = "no_data"
+LEGACY_STATUS_FAIL = "fail"  # устаревшее значение итогового статуса в БД
+
+# Ключи объекта status_stats в API и при подсчёте
+STATUS_STATS_KEY = "status_stats"
+STATUS_STATS_TOTAL = "total"
 ENCODING = "utf-8"
 RESULT_NAMING = "result.json"
 CONTAINER_NAMING = "container.json"
