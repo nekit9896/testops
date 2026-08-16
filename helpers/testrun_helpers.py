@@ -315,7 +315,7 @@ def _status_signal_from_value(status: Optional[str]) -> RunStatusSignal:
     if normalized in {const.STATUS_FAILED, const.LEGACY_STATUS_FAIL}:
         return const.STATUS_FAILED
     if normalized in {
-        const.STATUS_PASS,
+        const.STATUS_PASSED,
         const.STATUS_SKIPPED,
         const.STATUS_DESELECTED,
     }:
@@ -383,12 +383,12 @@ def _run_status_from_signal(signal: RunStatusSignal) -> str:
         return const.STATUS_BROKEN
     if signal == const.STATUS_FAILED:
         return const.STATUS_FAILED
-    return const.STATUS_PASS
+    return const.STATUS_PASSED
 
 
 def _empty_status_stats() -> Dict[str, int]:
     return {
-        const.STATUS_PASS: 0,
+        const.STATUS_PASSED: 0,
         const.STATUS_FAILED: 0,
         const.STATUS_BROKEN: 0,
         const.STATUS_SKIPPED: 0,
@@ -399,23 +399,12 @@ def _empty_status_stats() -> Dict[str, int]:
 def _status_count_bucket(status: Optional[str]) -> str:
     """
     Соотносит статус одного тест-кейса из Allure result.json к bucket для счётчиков шкалы.
-
-    Известные статусы Allure: passed, failed, broken, skipped, deselected.
-    Статус ``pending`` в Allure results не используется — это внутренний статус TestOps
-    для записи в БД до завершения обработки upload.
-
-    Args:
-        status: значение поля ``status`` из *-result.json.
-
-    Returns:
-        Ключ bucket: ``STATUS_PASS``, ``STATUS_FAILED``, ``STATUS_BROKEN`` или ``STATUS_SKIPPED``.
-        ``None`` и неизвестные значения учитываются как ``STATUS_FAILED`` (с warning в лог).
     """
     normalized = _normalize_status_value(status)
     if normalized is None:
         return const.STATUS_FAILED
-    if normalized == const.STATUS_PASS:
-        return const.STATUS_PASS
+    if normalized == const.STATUS_PASSED:
+        return const.STATUS_PASSED
     if normalized in {const.STATUS_FAILED, const.LEGACY_STATUS_FAIL}:
         return const.STATUS_FAILED
     if normalized == const.STATUS_BROKEN:
@@ -512,7 +501,7 @@ def format_timestamp(timestamp: int) -> str:
 
 def check_all_tests_passed_run(
     files: Sequence[FileStorage],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Проверяет, прошли ли все автотесты успешно, и возвращает статус,
     а также время начала и окончания выполнения тестов.
@@ -615,9 +604,7 @@ def check_all_tests_passed_run(
             data = parse_json_file(file)
 
             if not data:
-                status_signal = _merge_status_signals(
-                    status_signal, const.STATUS_FAILED
-                )
+                status_signal = _merge_status_signals(status_signal, const.STATUS_FAILED)
                 _increment_status_count(status_counts, const.STATUS_FAILED)
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
@@ -755,7 +742,7 @@ def update_test_result(new_result: "TestResult", test_run_info: dict) -> None:
     new_result.start_date = test_run_info.get(const.START_RUN_KEY)
     new_result.end_date = test_run_info.get(const.STOP_RUN_KEY)
     stats = test_run_info.get(const.STATUS_STATS_KEY) or {}
-    new_result.passed_count = stats.get(const.STATUS_PASS, 0)
+    new_result.passed_count = stats.get(const.STATUS_PASSED, 0)
     new_result.failed_count = stats.get(const.STATUS_FAILED, 0)
     new_result.broken_count = stats.get(const.STATUS_BROKEN, 0)
     new_result.skipped_count = stats.get(const.STATUS_SKIPPED, 0)
@@ -818,7 +805,7 @@ def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
         broken = result.broken_count or 0
         skipped = result.skipped_count or 0
         status_stats = {
-            const.STATUS_PASS: passed,
+            const.STATUS_PASSED: passed,
             const.STATUS_FAILED: failed,
             const.STATUS_BROKEN: broken,
             const.STATUS_SKIPPED: skipped,

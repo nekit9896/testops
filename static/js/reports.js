@@ -17,10 +17,10 @@ const TEST_STATUS = {
 };
 
 const STATUS_BAR_COLORS = {
-  [TEST_STATUS.PASSED]: "#22c55e",
-  [TEST_STATUS.FAILED]: "#ef4444",
-  [TEST_STATUS.BROKEN]: "#f97316",
-  [TEST_STATUS.SKIPPED]: "#9ca3af",
+  [TEST_STATUS.PASSED]: "#97cc64",
+  [TEST_STATUS.FAILED]: "#fe5b3c",
+  [TEST_STATUS.BROKEN]: "#fecf4b",
+  [TEST_STATUS.SKIPPED]: "#ababab",
 };
 
 class ReportsPage {
@@ -671,6 +671,22 @@ class ReportsPage {
     }
 
     /**
+     * Рендерит ссылку на отчёт запуска.
+     */
+    renderReportLink(id, innerHtml, { linkClass = "text-blue-600 hover:underline", ariaLabel = "" } = {}) {
+      const safeId = this.escapeHtml(id ?? "-");
+      const label = ariaLabel
+        ? this.escapeHtml(ariaLabel)
+        : `Открыть отчёт запуска #${safeId}`;
+      return (
+        `<a href="/reports/${safeId}" class="${linkClass}" target="_blank" rel="noopener noreferrer" ` +
+          `aria-label="${label}">` +
+          innerHtml +
+        `</a>`
+      );
+    }
+
+    /**
      * Рендерит текстовый статус для legacy-записей без status_stats.
      */
     renderLegacyStatusText(item) {
@@ -685,7 +701,7 @@ class ReportsPage {
     /**
      * Рендерит цветную шкалу статусов тестов.
      */
-    renderStatusBar(stats) {
+    renderStatusBar(stats, id) {
       const segments = [
         { key: TEST_STATUS.PASSED, count: stats.passed || 0, label: TEST_STATUS.PASSED },
         { key: TEST_STATUS.FAILED, count: stats.failed || 0, label: TEST_STATUS.FAILED },
@@ -718,12 +734,16 @@ class ReportsPage {
         })
         .join("");
 
-      return (
+      const barHtml =
         `<div class="flex h-6 w-full rounded overflow-hidden" role="img" ` +
           `aria-label="${this.escapeHtml(ariaLabel)}">` +
           segmentHtml +
-        `</div>`
-      );
+        `</div>`;
+
+      return this.renderReportLink(id, barHtml, {
+        linkClass: "block no-underline hover:opacity-90",
+        ariaLabel: `Открыть отчёт запуска #${id}`,
+      });
     }
 
     /**
@@ -744,7 +764,7 @@ class ReportsPage {
         return `<span class="text-sm font-semibold text-gray-400">${TEST_STATUS.NO_DATA}</span>`;
       }
 
-      return this.renderStatusBar(item.status_stats);
+      return this.renderStatusBar(item.status_stats, item.id);
     }
 
     /**
@@ -794,7 +814,7 @@ class ReportsPage {
               `<td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${endDate}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${stand}</td>` +
-              `<td class="px-4 py-2 text-sm w-full">${statusCell}</td>` +
+              `<td class="px-4 py-2 text-sm w-full text-center">${statusCell}</td>` +
             "</tr>"
           );
         })

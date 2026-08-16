@@ -56,7 +56,7 @@ STATUS_KEY = "status"
 PENDING_STATUS = "pending"
 
 # Статусы тест-кейсов в Allure result.json и итоговый статус прогона в TestOps
-STATUS_PASS = "passed"
+STATUS_PASSED = "passed"
 STATUS_FAILED = "failed"
 STATUS_BROKEN = "broken"
 STATUS_SKIPPED = "skipped"
