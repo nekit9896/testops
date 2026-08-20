@@ -16,5 +16,7 @@ ENV FLASK_RUN_PORT=5000
 EXPOSE 9003
 EXPOSE 5000
 
-# Запускаем приложение
-CMD ["flask", "run"]
+RUN chmod +x /app/scripts/entrypoint.sh
+
+# wait-for-db -> проверка таблиц PostgreSQL -> flask run
+CMD ["/app/scripts/entrypoint.sh"]
