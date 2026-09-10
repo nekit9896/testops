@@ -6,7 +6,6 @@
 
 Запуск из /app в контейнере приложения (PYTHONPATH=/app):
     python scripts/rebuild_testruns_from_minio.py --dry-run
-    python -m scripts.rebuild_testruns_from_minio --dry-run
 """
 
 from __future__ import annotations
