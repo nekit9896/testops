@@ -20,7 +20,8 @@ from app import db
 from app.clients import MinioClient
 from app.models import TestResult
 from helpers.allure_utils import (extract_description_from_environment_file,
-                                  extract_stand_from_environment_file)
+                                  extract_stand_from_environment_file,
+                                  repair_mojibake)
 from helpers.archive_utils import (UploadValidationError,
                                    is_allure_payload_filename,
                                    open_validated_tar_gz,
@@ -1143,6 +1144,34 @@ def log_reports(results_present: bool) -> None:
         )
 
 
+def _repair_environment_properties(results_dir: str) -> None:
+    """
+    Восстанавливает mojibake (UTF-8 -> Latin-1) в environment.properties перед
+    генерацией allure-отчёта, чтобы раздел ENVIRONMENT отображался корректно.
+    """
+    for root, _, files in os.walk(results_dir):
+        for name in files:
+            if os.path.basename(name) != "environment.properties":
+                continue
+            file_path = os.path.join(root, name)
+            try:
+                with open(file_path, "r", encoding="utf-8") as env_file:
+                    content = env_file.read()
+                repaired = repair_mojibake(content)
+                if repaired != content:
+                    with open(file_path, "w", encoding="utf-8") as env_file:
+                        env_file.write(repaired)
+                    logger.info(
+                        "Восстановлен mojibake в environment.properties: %s",
+                        file_path,
+                    )
+            except Exception:
+                logger.exception(
+                    "Ошибка при восстановлении environment.properties: %s",
+                    file_path,
+                )
+
+
 def generate_and_upload_report(run_name: str) -> None:
     """
     Генерирует и загружает allure-report в MinIO.
@@ -1155,6 +1184,8 @@ def generate_and_upload_report(run_name: str) -> None:
         logger.info("Начало скачивания файлов из MinIO")
         download_allure_results(run_name, temp_dir)
         results_dir_for_generation = _resolve_allure_results_dir(temp_dir)
+
+        _repair_environment_properties(results_dir_for_generation)
 
         logger.info("Начало генерации allure-report")
         generate_allure_report(results_dir_for_generation, report_dir)

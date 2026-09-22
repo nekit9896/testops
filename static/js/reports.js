@@ -58,9 +58,6 @@ class ReportsPage {
       this.loadingIndicator = document.getElementById("reports-loading");
       this.prevButton = document.getElementById("reports-prev");
       this.nextButton = document.getElementById("reports-next");
-      this.tableWrapper = document.querySelector("[data-reports-table-wrapper]");
-      // Кэш исходной высоты таблицы (чтобы таблица не прыгала при коротких страницах)
-      this.defaultTableHeight = null;
   
       // Элементы фильтра по дате
       this.dateFromInput = document.getElementById("date-from");
@@ -791,7 +788,6 @@ class ReportsPage {
             </td>
           </tr>`;
         this.showMessage(emptyText, false);
-        this.adjustTableHeight();
         return;
       }
   
@@ -833,7 +829,6 @@ class ReportsPage {
         .join("");
   
       this.tableBody.innerHTML = rows;
-      this.adjustTableHeight();
     }
   
     /**
@@ -901,46 +896,6 @@ class ReportsPage {
       }
     }
   
-    /**
-     * Подгоняет минимальную высоту таблицы так, чтобы интерфейс не гулял, когда текущая страница содержит мало строк.
-     *
-     * Логика:
-     *  - вычисляем высоту заголовка и примерной строки
-     *  - если defaultTableHeight ещё не установлен — используем fallback: limit * rowHeight
-     *  - минимальная высота = max(defaultTableHeight, header + bodyHeight)
-     */
-    adjustTableHeight() {
-      if (!this.tableWrapper) {
-        return;
-      }
-  
-      const header = this.tableWrapper.querySelector("thead");
-      const headerHeight = header
-        ? header.getBoundingClientRect().height
-        : 0;
-      const sampleRow = this.tableBody
-        ? this.tableBody.querySelector("tr")
-        : null;
-      const rowHeight = sampleRow
-        ? sampleRow.getBoundingClientRect().height
-        : 48;
-  
-      if (!this.defaultTableHeight) {
-        const fallbackLimit = Number(this.limit) || 0;
-        this.defaultTableHeight = headerHeight + rowHeight * fallbackLimit;
-      }
-  
-      const bodyHeight = this.tableBody
-        ? this.tableBody.getBoundingClientRect().height
-        : 0;
-      const desiredHeight = headerHeight + bodyHeight;
-      const targetHeight = Math.max(
-        this.defaultTableHeight || 0,
-        desiredHeight
-      );
-  
-      this.tableWrapper.style.minHeight = `${Math.ceil(targetHeight)}px`;
-    }
   }
 
   // Явно публикуем класс в глобальную область для inline-инициализации в шаблоне.

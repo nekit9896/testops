@@ -91,11 +91,21 @@ def _adaptation_environment_input(
     return candidate
 
 
+def repair_mojibake(value: str) -> str:
+    """
+    Восстанавливает текст, повреждённый перекодировкой UTF-8 -> Latin-1/CP1252.
+    """
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+
 def _clean_value(value: Optional[str]) -> Optional[str]:
     """Нормализует значение из environment: None для пустых/служебных значений."""
     if value is None:
         return None
-    cleaned = value.strip()
+    cleaned = repair_mojibake(value).strip()
     if not cleaned or cleaned.lower() in {"none", "null", "-"}:
         return None
     return cleaned
