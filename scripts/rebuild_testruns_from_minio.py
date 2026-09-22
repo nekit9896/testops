@@ -15,7 +15,8 @@ import datetime
 import io
 import os
 from collections import defaultdict
-from typing import Any, DefaultDict, Iterable, Mapping, Optional, Protocol, Sequence
+from typing import (Any, DefaultDict, Iterable, Mapping, Optional, Protocol,
+                    Sequence)
 
 from werkzeug.datastructures import FileStorage
 
@@ -128,12 +129,33 @@ def _extract_stand(files: Sequence[FileStorage]) -> Optional[str]:
             stand = testrun_helpers._extract_stand_from_archive(content) or stand
         elif os.path.basename(filename) == "environment.properties":
             stand = (
-                testrun_helpers._extract_stand_value(
-                    "environment.properties", content
-                )
+                testrun_helpers._extract_stand_value("environment.properties", content)
                 or stand
             )
     return stand
+
+
+def _extract_description(files: Sequence[FileStorage]) -> Optional[str]:
+    """Достаёт description из environment.properties"""
+    description: Optional[str] = None
+    for file_storage in files:
+        filename = file_storage.filename or ""
+        _rewind(file_storage)
+        content = file_storage.stream.read()
+        _rewind(file_storage)
+        if testrun_helpers._is_allure_results_archive(filename):
+            description = (
+                testrun_helpers._extract_description_from_archive(content)
+                or description
+            )
+        elif os.path.basename(filename) == "environment.properties":
+            description = (
+                testrun_helpers._extract_description_value(
+                    "environment.properties", content
+                )
+                or description
+            )
+    return description
 
 
 def _build_file_storages(
@@ -164,6 +186,7 @@ def _print_plan(
     run_name: str,
     info: Mapping[str, Any],
     stand: Optional[str],
+    description: Optional[str],
     created_at: datetime.datetime,
     action: str,
 ) -> None:
@@ -171,7 +194,8 @@ def _print_plan(
     stats = info.get(const.STATUS_STATS_KEY) or {}
     print(
         f"{action} run_name={run_name} status={info.get(const.STATUS_KEY)} "
-        f"stand={stand!r} start={info.get(const.START_RUN_KEY)} "
+        f"stand={stand!r} description={description!r} "
+        f"start={info.get(const.START_RUN_KEY)} "
         f"stop={info.get(const.STOP_RUN_KEY)} "
         f"passed={stats.get(const.STATUS_PASSED, 0)} "
         f"failed={stats.get(const.STATUS_FAILED, 0)} "
@@ -187,9 +211,7 @@ def rebuild(dry_run: bool) -> None:
     minio_client = MinioClient()
 
     with app.app_context():
-        existing = {
-            name for (name,) in db.session.query(TestResult.run_name).all()
-        }
+        existing = {name for (name,) in db.session.query(TestResult.run_name).all()}
         groups = _group_objects_by_run(minio_client)
         print(f"Найдено префиксов в MinIO: {len(groups)}")
         print(f"Уже есть в testrun_results: {len(existing)}")
@@ -213,11 +235,14 @@ def rebuild(dry_run: bool) -> None:
 
             info = testrun_helpers.check_all_tests_passed_run(files)
             stand = _extract_stand(files)
+            description = _extract_description(files)
             created_at = _created_at_from_objects(objects)
             stats = info.get(const.STATUS_STATS_KEY) or {}
 
             if dry_run:
-                _print_plan(run_name, info, stand, created_at, "DRY-RUN insert")
+                _print_plan(
+                    run_name, info, stand, description, created_at, "DRY-RUN insert"
+                )
                 inserted += 1
                 continue
 
@@ -226,6 +251,7 @@ def rebuild(dry_run: bool) -> None:
                 start_date=_parse_run_datetime(info.get(const.START_RUN_KEY)),
                 end_date=_parse_run_datetime(info.get(const.STOP_RUN_KEY)),
                 stand=stand,
+                description=description,
                 status=info.get(const.STATUS_KEY),
                 passed_count=stats.get(const.STATUS_PASSED, 0),
                 failed_count=stats.get(const.STATUS_FAILED, 0),
@@ -236,7 +262,7 @@ def rebuild(dry_run: bool) -> None:
             )
             db.session.add(result)
             db.session.commit()
-            _print_plan(run_name, info, stand, created_at, "INSERTED")
+            _print_plan(run_name, info, stand, description, created_at, "INSERTED")
             inserted += 1
 
         print(

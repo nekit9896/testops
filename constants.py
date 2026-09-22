@@ -75,7 +75,7 @@ CONTAINER_NAMING = "container.json"
 START_RUN_KEY = "start"
 STOP_RUN_KEY = "stop"
 TIMESTAMP_DIVISOR = 1000
-REPORTS_PAGE_LIMIT = 20
+REPORTS_PAGE_LIMIT = 15
 
 # Тест кейсы:
 ASCII_CODING = "ascii"

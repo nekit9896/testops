@@ -58,9 +58,6 @@ class ReportsPage {
       this.loadingIndicator = document.getElementById("reports-loading");
       this.prevButton = document.getElementById("reports-prev");
       this.nextButton = document.getElementById("reports-next");
-      this.tableWrapper = document.querySelector("[data-reports-table-wrapper]");
-      // Кэш исходной высоты таблицы (чтобы таблица не прыгала при коротких страницах)
-      this.defaultTableHeight = null;
   
       // Элементы фильтра по дате
       this.dateFromInput = document.getElementById("date-from");
@@ -791,7 +788,6 @@ class ReportsPage {
             </td>
           </tr>`;
         this.showMessage(emptyText, false);
-        this.adjustTableHeight();
         return;
       }
   
@@ -802,7 +798,19 @@ class ReportsPage {
           const startDate = this.escapeHtml(this.formatLocalDate(item.start_date));
           const endDate = this.escapeHtml(this.formatLocalDate(item.end_date));
           const stand = this.escapeHtml(item.stand || "-");
+          const description = this.escapeHtml(item.description || "-");
           const statusCell = this.renderStatusCell(item);
+
+          const timeCell =
+            `<div class="leading-tight">${startDate}</div>` +
+            `<div class="leading-tight text-xs text-gray-400">${endDate}</div>`;
+
+          const descriptionCell = description === "-"
+            ? `<span class="text-gray-400">-</span>`
+            : `<div title="${description}" ` +
+                `style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;">` +
+                `${description}` +
+              `</div>`;
 
           return (
             '<tr class="hover:bg-gray-50">' +
@@ -811,8 +819,8 @@ class ReportsPage {
                   `Запуск #${id}` +
                 `</a>` +
               `</td>` +
-              `<td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>` +
-              `<td class="px-4 py-2 text-sm text-gray-600">${endDate}</td>` +
+              `<td class="px-4 py-2 text-sm text-gray-600">${timeCell}</td>` +
+              `<td class="px-4 py-2 text-sm text-gray-600">${descriptionCell}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${stand}</td>` +
               `<td class="px-4 py-2 text-sm w-full text-center">${statusCell}</td>` +
             "</tr>"
@@ -821,7 +829,6 @@ class ReportsPage {
         .join("");
   
       this.tableBody.innerHTML = rows;
-      this.adjustTableHeight();
     }
   
     /**
@@ -889,46 +896,6 @@ class ReportsPage {
       }
     }
   
-    /**
-     * Подгоняет минимальную высоту таблицы так, чтобы интерфейс не гулял, когда текущая страница содержит мало строк.
-     *
-     * Логика:
-     *  - вычисляем высоту заголовка и примерной строки
-     *  - если defaultTableHeight ещё не установлен — используем fallback: limit * rowHeight
-     *  - минимальная высота = max(defaultTableHeight, header + bodyHeight)
-     */
-    adjustTableHeight() {
-      if (!this.tableWrapper) {
-        return;
-      }
-  
-      const header = this.tableWrapper.querySelector("thead");
-      const headerHeight = header
-        ? header.getBoundingClientRect().height
-        : 0;
-      const sampleRow = this.tableBody
-        ? this.tableBody.querySelector("tr")
-        : null;
-      const rowHeight = sampleRow
-        ? sampleRow.getBoundingClientRect().height
-        : 48;
-  
-      if (!this.defaultTableHeight) {
-        const fallbackLimit = Number(this.limit) || 0;
-        this.defaultTableHeight = headerHeight + rowHeight * fallbackLimit;
-      }
-  
-      const bodyHeight = this.tableBody
-        ? this.tableBody.getBoundingClientRect().height
-        : 0;
-      const desiredHeight = headerHeight + bodyHeight;
-      const targetHeight = Math.max(
-        this.defaultTableHeight || 0,
-        desiredHeight
-      );
-  
-      this.tableWrapper.style.minHeight = `${Math.ceil(targetHeight)}px`;
-    }
   }
 
   // Явно публикуем класс в глобальную область для inline-инициализации в шаблоне.

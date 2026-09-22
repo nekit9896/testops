@@ -1,0 +1,4 @@
+# Shell-скрипты всегда должны выгружаться с LF-переводами строк.
+# Иначе в Windows-чекаутах (core.autocrlf=true) shebang превращается в
+# "#!/bin/sh\r", и Linux-контейнер падает с "no such file or directory".
+*.sh text eol=lf

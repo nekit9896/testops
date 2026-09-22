@@ -36,6 +36,7 @@ class TestResult(db.Model):
     start_date = db.Column(db.DateTime, nullable=True)
     end_date = db.Column(db.DateTime, nullable=True)
     stand = db.Column(db.String(128), nullable=True, index=True)
+    description = db.Column(db.String(512), nullable=True)
     status = db.Column(db.String(50), nullable=False)
     passed_count = db.Column(db.Integer, nullable=True)
     failed_count = db.Column(db.Integer, nullable=True)

@@ -266,7 +266,9 @@ def downgrade() -> None:
     bind = op.get_bind()
     created = {
         row[0]
-        for row in bind.execute(sa.text(f"SELECT table_name FROM {CREATED_TABLES_META}"))
+        for row in bind.execute(
+            sa.text(f"SELECT table_name FROM {CREATED_TABLES_META}")
+        )
     }
     for name in DROP_ORDER:
         if name in created and name in existing:

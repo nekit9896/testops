@@ -1,6 +1,7 @@
 .idea/
 .venv/
 .vscode/
+.clinerules/
 __pycache__/
 *allure-results/*
 .env

@@ -19,7 +19,9 @@ import constants as const
 from app import db
 from app.clients import MinioClient
 from app.models import TestResult
-from helpers.allure_utils import extract_stand_from_environment_file
+from helpers.allure_utils import (extract_description_from_environment_file,
+                                  extract_stand_from_environment_file,
+                                  repair_mojibake)
 from helpers.archive_utils import (UploadValidationError,
                                    is_allure_payload_filename,
                                    open_validated_tar_gz,
@@ -179,6 +181,23 @@ def _extract_stand_value(filename: str, file_content: bytes) -> Optional[str]:
     return stand.strip() if stand else None
 
 
+def _extract_description_value(filename: str, file_content: bytes) -> Optional[str]:
+    """Пытается извлечь description из environment.properties."""
+    if filename != "environment.properties":
+        return None
+
+    try:
+        content_text = file_content.decode("utf-8", errors="ignore")
+    except Exception:
+        logger.exception(
+            "Не удалось декодировать environment.properties для извлечения description"
+        )
+        return None
+
+    description = extract_description_from_environment_file(content_text) or None
+    return description.strip() if description else None
+
+
 def _is_allure_results_archive(filename: str) -> bool:
     """Проверяет, что загружен архив allure-results.tar.gz."""
     return filename.lower().endswith(const.ALLURE_RESULTS_ARCHIVE_SUFFIX)
@@ -201,6 +220,28 @@ def _extract_stand_from_archive(archive_bytes: bytes) -> Optional[str]:
                 continue
             raw = fileobj.read()
             return _extract_stand_value("environment.properties", raw)
+    finally:
+        tar.close()
+    return None
+
+
+def _extract_description_from_archive(archive_bytes: bytes) -> Optional[str]:
+    """Извлекает description из environment.properties внутри tar.gz архива."""
+    tar = open_validated_tar_gz(archive_bytes)
+    try:
+        for member in tar.getmembers():
+            if not member.isfile():
+                continue
+            if (
+                os.path.basename(member.name.replace("\\", "/"))
+                != "environment.properties"
+            ):
+                continue
+            fileobj = tar.extractfile(member)
+            if not fileobj:
+                continue
+            raw = fileobj.read()
+            return _extract_description_value("environment.properties", raw)
     finally:
         tar.close()
     return None
@@ -233,6 +274,37 @@ def _persist_detected_stand(run_name: str, detected_stand: str) -> None:
         logger.exception(
             "Ошибка при сохранении stand=%s для run=%s в базе данных",
             detected_stand,
+            run_name,
+        )
+
+
+def _persist_detected_description(run_name: str, detected_description: str) -> None:
+    """Сохраняет значение description в TestResult, если запись существует."""
+    try:
+        test_result: Optional[TestResult] = TestResult.query.filter_by(
+            run_name=run_name, is_deleted=False
+        ).first()
+        if not test_result:
+            logger.warning(
+                "Не удалось найти TestResult для run_name=%s, description=%s не сохранён",
+                run_name,
+                detected_description,
+            )
+            return
+
+        test_result.description = detected_description
+        db.session.add(test_result)
+        db.session.commit()
+        logger.info(
+            "Сохранили description='%s' для run=%s в TestResult(id=%s)",
+            detected_description,
+            run_name,
+            test_result.id,
+        )
+    except Exception:
+        logger.exception(
+            "Ошибка при сохранении description=%s для run=%s в базе данных",
+            detected_description,
             run_name,
         )
 
@@ -449,7 +521,7 @@ def allowed_file(filename: str) -> bool:
 def process_and_upload_file(run_name: str, file: FileStorage) -> str:
     """
     Валидирует, обрабатывает и загружает файл в MinIO.
-    Пытается извлечь stand из environment.properties и сохранить его в БД.
+    Пытается извлечь stand и description из environment.properties и сохранить их в БД.
     """
     try:
         filename = _validate_upload_file(file)
@@ -460,11 +532,13 @@ def process_and_upload_file(run_name: str, file: FileStorage) -> str:
 
         if _is_allure_results_archive(filename):
             detected_stand = _extract_stand_from_archive(file_content)
+            detected_description = _extract_description_from_archive(file_content)
             _upload_file_to_minio(
                 run_name, const.ALLURE_RESULTS_ARCHIVE_NAME, file_content
             )
         else:
             detected_stand = _extract_stand_value(filename, file_content)
+            detected_description = _extract_description_value(filename, file_content)
             _upload_file_to_minio(run_name, filename, file_content)
 
         if detected_stand:
@@ -474,6 +548,14 @@ def process_and_upload_file(run_name: str, file: FileStorage) -> str:
                 run_name,
             )
             _persist_detected_stand(run_name, detected_stand)
+
+        if detected_description:
+            logger.info(
+                "Обнаружен description='%s' в environment.properties для run=%s",
+                detected_description,
+                run_name,
+            )
+            _persist_detected_description(run_name, detected_description)
 
         return filename
 
@@ -566,7 +648,7 @@ def check_all_tests_passed_run(
                     status_signal = _merge_status_signals(
                         status_signal, const.STATUS_FAILED
                     )
-                    if entry_name.endswith(const.RESULT_NAMING):
+                    if entry_name.endswith(const.STATUS_FAILED):
                         _increment_status_count(status_counts, const.STATUS_FAILED)
                     continue
                 has_valid_payload_data = True
@@ -604,7 +686,9 @@ def check_all_tests_passed_run(
             data = parse_json_file(file)
 
             if not data:
-                status_signal = _merge_status_signals(status_signal, const.STATUS_FAILED)
+                status_signal = _merge_status_signals(
+                    status_signal, const.STATUS_FAILED
+                )
                 _increment_status_count(status_counts, const.STATUS_FAILED)
                 logger.warning("Файл %s не содержит валидный JSON", filename)
             else:
@@ -818,6 +902,7 @@ def _serialize_test_result(result: TestResult) -> Dict[str, Any]:
         "start_date": _format_datetime(result.start_date),
         "end_date": _format_datetime(result.end_date),
         "stand": result.stand or None,
+        "description": result.description or None,
         "status": result.status,
         const.STATUS_STATS_KEY: status_stats,
     }
@@ -1059,6 +1144,34 @@ def log_reports(results_present: bool) -> None:
         )
 
 
+def _repair_environment_properties(results_dir: str) -> None:
+    """
+    Восстанавливает mojibake (UTF-8 -> Latin-1) в environment.properties перед
+    генерацией allure-отчёта, чтобы раздел ENVIRONMENT отображался корректно.
+    """
+    for root, _, files in os.walk(results_dir):
+        for name in files:
+            if os.path.basename(name) != "environment.properties":
+                continue
+            file_path = os.path.join(root, name)
+            try:
+                with open(file_path, "r", encoding="utf-8") as env_file:
+                    content = env_file.read()
+                repaired = repair_mojibake(content)
+                if repaired != content:
+                    with open(file_path, "w", encoding="utf-8") as env_file:
+                        env_file.write(repaired)
+                    logger.info(
+                        "Восстановлен mojibake в environment.properties: %s",
+                        file_path,
+                    )
+            except Exception:
+                logger.exception(
+                    "Ошибка при восстановлении environment.properties: %s",
+                    file_path,
+                )
+
+
 def generate_and_upload_report(run_name: str) -> None:
     """
     Генерирует и загружает allure-report в MinIO.
@@ -1071,6 +1184,8 @@ def generate_and_upload_report(run_name: str) -> None:
         logger.info("Начало скачивания файлов из MinIO")
         download_allure_results(run_name, temp_dir)
         results_dir_for_generation = _resolve_allure_results_dir(temp_dir)
+
+        _repair_environment_properties(results_dir_for_generation)
 
         logger.info("Начало генерации allure-report")
         generate_allure_report(results_dir_for_generation, report_dir)
