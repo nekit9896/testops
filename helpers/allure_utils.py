@@ -70,6 +70,37 @@ def _extract_properties_from_content(file_content: str) -> Dict[str, str]:
     return _parse_properties_text(file_content)
 
 
+def _adaptation_environment_input(
+    file_path_or_content: str | Path | bytes,
+) -> str:
+    """Приводит вход (bytes/путь/текст) к текстовому содержимому environment-файла."""
+    if isinstance(file_path_or_content, (bytes, bytearray)):
+        return file_path_or_content.decode("utf-8", errors="ignore")
+
+    candidate = str(file_path_or_content)
+
+    # Если это существующий путь к файлу - читаем с диска
+    try:
+        path = Path(candidate)
+        if path.exists() and path.is_file():
+            return _read_text_from_file(path)
+    except Exception:
+        pass
+
+    # иначе считаем, что это уже текстовое содержимое
+    return candidate
+
+
+def _clean_value(value: Optional[str]) -> Optional[str]:
+    """Нормализует значение из environment: None для пустых/служебных значений."""
+    if value is None:
+        return None
+    cleaned = value.strip()
+    if not cleaned or cleaned.lower() in {"none", "null", "-"}:
+        return None
+    return cleaned
+
+
 def extract_stand_from_environment_file(
     file_path_or_content: str | Path | bytes,
 ) -> Optional[str]:
@@ -89,42 +120,51 @@ def extract_stand_from_environment_file(
     Возвращает строку с именем стенда или None.
     """
     try:
-        # Если это байты, декодируем
-        if isinstance(file_path_or_content, (bytes, bytearray)):
-            raw_text = file_path_or_content.decode("utf-8", errors="ignore")
-        else:
-            # приводим к строке для проверки
-            candidate = str(file_path_or_content)
-
-            # Если это существующий путь к файлу — читаем с диска
-            try:
-                path = Path(candidate)
-                if path.exists() and path.is_file():
-                    raw_text = _read_text_from_file(path)
-                else:
-                    # иначе считаем, что это уже текстовое содержимое
-                    raw_text = candidate
-            except Exception:
-                # на всякий случай fallback — считаем как содержимое
-                raw_text = candidate
-
-        # Парсим содержимое универсальным парсером
+        raw_text = _adaptation_environment_input(file_path_or_content)
         properties = _extract_properties_from_content(raw_text or "")
 
         # основной ключ
-        stand_value = properties.get("stand")
+        stand_value = _clean_value(properties.get("stand"))
         if stand_value:
-            return stand_value.strip()
+            return stand_value
 
         # возможные альтернативные ключи
         for fallback_key in ("stand_name", "environment", "env"):
-            fallback_value = properties.get(fallback_key)
+            fallback_value = _clean_value(properties.get(fallback_key))
             if fallback_value:
-                return fallback_value.strip()
+                return fallback_value
 
         return None
 
     except Exception as error:
         # Логируем детально, но не поднимаем исключение — не критично для загрузки результата
         logger.exception("Failed to extract 'stand' from environment input: %s", error)
+        return None
+
+
+def extract_description_from_environment_file(
+    file_path_or_content: str | Path | bytes,
+) -> Optional[str]:
+    """
+    Универсальная функция извлечения 'description' из environment-файла/контента.
+
+    Принимает:
+      - путь к файлу (str или pathlib.Path) - тогда будет прочитан файл с диска,
+      - либо непосредственный текст/bytes с содержимым файла (json или properties).
+
+    Поддерживаются форматы:
+      - JSON: {"description": "smoke run"} (а также другие валидные JSON-объекты)
+      - классические properties: description=smoke run
+
+    Возвращает строку с описанием прогона или None.
+    """
+    try:
+        raw_text = _adaptation_environment_input(file_path_or_content)
+        properties = _extract_properties_from_content(raw_text or "")
+        return _clean_value(properties.get("description"))
+    except Exception as error:
+        logger.exception(
+            "Ошибка при извлечении 'description' из полученных данных тестрана: %s",
+            error,
+        )
         return None

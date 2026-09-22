@@ -802,7 +802,19 @@ class ReportsPage {
           const startDate = this.escapeHtml(this.formatLocalDate(item.start_date));
           const endDate = this.escapeHtml(this.formatLocalDate(item.end_date));
           const stand = this.escapeHtml(item.stand || "-");
+          const description = this.escapeHtml(item.description || "-");
           const statusCell = this.renderStatusCell(item);
+
+          const timeCell =
+            `<div class="leading-tight">${startDate}</div>` +
+            `<div class="leading-tight text-xs text-gray-400">${endDate}</div>`;
+
+          const descriptionCell = description === "-"
+            ? `<span class="text-gray-400">-</span>`
+            : `<div title="${description}" ` +
+                `style="display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;word-break:break-word;">` +
+                `${description}` +
+              `</div>`;
 
           return (
             '<tr class="hover:bg-gray-50">' +
@@ -811,8 +823,8 @@ class ReportsPage {
                   `Запуск #${id}` +
                 `</a>` +
               `</td>` +
-              `<td class="px-4 py-2 text-sm text-gray-600">${startDate}</td>` +
-              `<td class="px-4 py-2 text-sm text-gray-600">${endDate}</td>` +
+              `<td class="px-4 py-2 text-sm text-gray-600">${timeCell}</td>` +
+              `<td class="px-4 py-2 text-sm text-gray-600">${descriptionCell}</td>` +
               `<td class="px-4 py-2 text-sm text-gray-600">${stand}</td>` +
               `<td class="px-4 py-2 text-sm w-full text-center">${statusCell}</td>` +
             "</tr>"
